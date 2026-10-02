@@ -1,0 +1,3 @@
+ALTER TABLE menu_items
+  ADD COLUMN IF NOT EXISTS image_mime_type TEXT,
+  ADD COLUMN IF NOT EXISTS image_data BYTEA;
