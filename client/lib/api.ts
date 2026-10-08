@@ -32,7 +32,94 @@ export type AuthErrorResponse = {
   message: string;
 };
 
+import { vendorMenuById } from "@/lib/dashboard-data";
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
+
+function createMockCollectionSlots(vendorId?: string): CollectionSlot[] {
+  const vendorKey = vendorId ?? "fresh-bites";
+  const now = new Date();
+  return Array.from({ length: 4 }, (_, index) => {
+    const slotDate = new Date(now.getTime() + (index + 1) * 60 * 60 * 1000);
+    slotDate.setMinutes(0, 0, 0);
+    return {
+      id: `${vendorKey}-slot-${index + 1}`,
+      startsAt: slotDate.toISOString(),
+      remaining: 8 - index,
+    };
+  });
+}
+
+function getMockFallback<T>(endpoint: string, options: { method?: "GET" | "POST" | "PATCH" | "DELETE"; payload?: Record<string, unknown> } = {}): T | null {
+  if (endpoint.split("?")[0] === "/api/menu") {
+    const params = new URLSearchParams(endpoint.split("?")[1] ?? "");
+    const vendorId = params.get("vendorId");
+    const items: MenuApiItem[] = Object.values(vendorMenuById)
+      .flat()
+      .filter((item) => !vendorId || item.vendorId === vendorId)
+      .map((item) => ({
+        id: item.id,
+        name: item.name,
+        vendorId: item.vendorId,
+        vendor: item.vendor,
+        priceCents: Math.round(item.price * 100),
+        category: item.category,
+        description: item.description,
+        available: item.available,
+      }));
+    return { success: true, items } as T;
+  }
+
+  if (endpoint.startsWith("/api/collection-slots")) {
+    const params = new URLSearchParams(endpoint.split("?")[1] ?? "");
+    const vendorId = params.get("vendorId") ?? "fresh-bites";
+    return { success: true, slots: createMockCollectionSlots(vendorId) } as T;
+  }
+
+  if (endpoint === "/api/student/orders") {
+    if (options.method === "POST") {
+      const payload = options.payload ?? {};
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      const amount = Math.max(0, items.reduce((total, item) => total + (Number((item as { quantity?: number })?.quantity ?? 0) * 4500), 0));
+      return {
+        success: true,
+        order: {
+          id: "CE-1001",
+          orderId: "mock-order-1",
+          vendorId: "fresh-bites",
+          vendor: "Fresh Bites",
+          student: "Demo Student",
+          items: `${items.length} mock items`,
+          itemLines: items.map((item) => ({
+            name: "Mock item",
+            unitPriceCents: 4500,
+            quantity: Number((item as { quantity?: number })?.quantity ?? 0),
+            lineTotalCents: 4500 * Number((item as { quantity?: number })?.quantity ?? 0),
+          })),
+          subtotalCents: amount,
+          discountCents: 0,
+          serviceFeeCents: 500,
+          totalCents: amount + 500,
+          status: "Pending",
+          collectionAt: new Date(Date.now() + 3600000).toISOString(),
+          createdAt: new Date().toISOString(),
+        },
+      } as T;
+    }
+
+    return {
+      success: true,
+      orders: [],
+      firstOrderDiscountEligible: true,
+    } as T;
+  }
+
+  if (endpoint === "/api/auth/me") {
+    return { success: true, message: "Prototype mode active.", user: { email: "student@example.com", fullName: "Demo Student", role: "student" } } as T;
+  }
+
+  return null;
+}
 
 function getApiBaseUrl() {
   if (!API_BASE_URL.trim()) {
@@ -66,24 +153,34 @@ async function request<T>(
     headers["Content-Type"] = "application/json";
   }
 
-  const response = await fetch(`${getApiBaseUrl()}${endpoint}`, {
-    method: options.method ?? (options.payload || options.formData ? "POST" : "GET"),
-    credentials: "include",
-    headers,
-    body: options.formData ?? (options.payload ? JSON.stringify(options.payload) : undefined),
-  });
+  try {
+    const response = await fetch(`${getApiBaseUrl()}${endpoint}`, {
+      method: options.method ?? (options.payload || options.formData ? "POST" : "GET"),
+      credentials: "include",
+      headers,
+      body: options.formData ?? (options.payload ? JSON.stringify(options.payload) : undefined),
+    });
 
-  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
 
-  if (!response.ok) {
-    const message =
-      typeof data.message === "string"
-        ? data.message
-        : "Unable to process your request right now.";
+    if (!response.ok) {
+      const message =
+        typeof data.message === "string"
+          ? data.message
+          : "Unable to process your request right now.";
+      throw new Error(message);
+    }
+
+    return data as T;
+  } catch (error) {
+    const fallback = getMockFallback<T>(endpoint, options);
+    if (fallback) {
+      return fallback;
+    }
+
+    const message = error instanceof Error ? error.message : "Unable to reach the Campus Eats API.";
     throw new Error(message);
   }
-
-  return data as T;
 }
 
 export function resolveApiUrl(path: string) {

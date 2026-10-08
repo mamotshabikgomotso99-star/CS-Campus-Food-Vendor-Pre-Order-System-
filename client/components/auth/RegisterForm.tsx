@@ -29,14 +29,20 @@ type FormState = {
   termsAccepted: boolean;
 };
 
-export function RegisterForm() {
+export function RegisterForm({
+  initialRole = "student",
+  showVendor = false,
+}: {
+  initialRole?: AccountRole;
+  showVendor?: boolean;
+}) {
   const router = useRouter();
   const [form, setForm] = useState<FormState>({
     fullName: "",
     email: "",
     password: "",
     confirmPassword: "",
-    role: "",
+    role: initialRole,
     studentNumber: "",
     vendorName: "",
     termsAccepted: false,
@@ -97,7 +103,7 @@ export function RegisterForm() {
         vendorName: form.role === "vendor" ? form.vendorName : undefined,
       });
 
-      router.push("/verify-email");
+      router.push(form.role === "vendor" ? "/vendor/login" : "/verify-email");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Registration failed. Please try again.";
       setErrors({ general: message });
@@ -141,6 +147,7 @@ export function RegisterForm() {
           value={form.role}
           onChange={(value) => updateField("role", value)}
           error={errors.role}
+          showVendor={showVendor}
         />
 
         {form.role === "student" ? (
@@ -226,11 +233,21 @@ export function RegisterForm() {
 
         <p className="text-center text-sm text-slate-600">
           Already have an account? {" "}
-          <Link href="/login" className="font-semibold text-violet-700 hover:text-violet-800">
+          <Link href={form.role === "vendor" ? "/vendor/login" : "/login"} className="font-semibold text-violet-700 hover:text-violet-800">
             Log in
           </Link>
         </p>
       </form>
+
+      <Link
+        href={form.role === "vendor" ? "/register" : "/register?role=vendor"}
+        className="fixed bottom-4 right-4 z-20 inline-flex items-center gap-1.5 rounded-full border border-violet-100 bg-white/75 px-2.5 py-1.5 text-[11px] font-medium text-violet-700 shadow-[0_4px_12px_rgba(124,58,237,0.06)] backdrop-blur-sm transition hover:border-violet-200 hover:bg-white hover:text-violet-800"
+      >
+        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-violet-50 text-[9px] leading-none text-violet-700">
+          {form.role === "vendor" ? "S" : "V"}
+        </span>
+        {form.role === "vendor" ? "Student" : "Vendor"}
+      </Link>
     </div>
   );
 }
