@@ -13,12 +13,10 @@ import {
 } from "@/lib/validations";
 import { AuthInput } from "@/components/auth/AuthInput";
 import { PasswordInput } from "@/components/auth/PasswordInput";
-import { RoleSelector } from "@/components/auth/RoleSelector";
 
-export function LoginForm() {
+export function LoginForm({ role = "student" }: { role?: AccountRole }) {
   const router = useRouter();
   const [form, setForm] = useState({ email: "", password: "", remember: true });
-  const [selectedRole, setSelectedRole] = useState<AccountRole>("student");
   const [errors, setErrors] = useState<{ email?: string; password?: string; general?: string }>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -56,12 +54,12 @@ export function LoginForm() {
         remember: form.remember,
       });
 
-      if (response.role && response.role !== selectedRole) {
-        const portalName = selectedRole === "vendor" ? "vendor" : "student";
+      if (response.role !== role) {
+        const portalName = role === "vendor" ? "vendor" : "student";
         throw new Error(`This account is not registered for the ${portalName} portal.`);
       }
 
-      const accountRole = response.role ?? selectedRole;
+      const accountRole = role;
       saveAuthIdentity({
         fullName: response.user?.fullName?.trim() || form.email.split("@")[0],
         email: response.user?.email ?? form.email.trim(),
@@ -84,16 +82,14 @@ export function LoginForm() {
           Sign in
         </p>
         <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-900">
-          Welcome back!
+          {role === "vendor" ? "Vendor sign in" : "Welcome back!"}
         </h2>
         <p className="mt-2 text-sm text-slate-600">
-          Choose your account type, then log in to continue.
+          {role === "vendor" ? "Sign in to your vendor account." : "Sign in to your student account."}
         </p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-5" noValidate>
-        <RoleSelector value={selectedRole} onChange={setSelectedRole} />
-
         <AuthInput
           label="Email address"
           type="email"
@@ -152,13 +148,27 @@ export function LoginForm() {
           )}
         </button>
 
-        <p className="text-center text-sm text-slate-600">
-          Don&apos;t have an account? {" "}
-          <Link href="/register" className="font-semibold text-violet-700 hover:text-violet-800">
-            Sign up
-          </Link>
-        </p>
+        {role === "student" ? (
+          <p className="text-center text-sm text-slate-600">
+            Don&apos;t have an account? {" "}
+            <Link href="/register" className="font-semibold text-violet-700 hover:text-violet-800">
+              Sign up
+            </Link>
+          </p>
+        ) : null}
       </form>
+
+      {role === "student" ? (
+        <Link
+          href="/vendor/login"
+          className="fixed bottom-4 right-4 z-20 inline-flex items-center gap-1.5 rounded-full border border-violet-100 bg-white/70 px-2.5 py-1.5 text-[11px] font-medium text-violet-700 shadow-[0_4px_12px_rgba(124,58,237,0.06)] backdrop-blur-sm transition hover:border-violet-200 hover:bg-white hover:text-violet-800"
+        >
+          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-violet-50 text-[9px] leading-none text-violet-700">
+            V
+          </span>
+          Vendor
+        </Link>
+      ) : null}
     </div>
   );
 }

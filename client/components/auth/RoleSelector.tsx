@@ -5,6 +5,7 @@ type RoleSelectorProps = {
   value: AccountRole | "";
   onChange: (value: AccountRole) => void;
   error?: string;
+  showVendor?: boolean;
 };
 
 const roles = [
@@ -22,12 +23,14 @@ const roles = [
   },
 ];
 
-export function RoleSelector({ value, onChange, error }: RoleSelectorProps) {
+export function RoleSelector({ value, onChange, error, showVendor = false }: RoleSelectorProps) {
+  const visibleRoles = showVendor ? roles : roles.filter((role) => role.value === value);
+
   return (
     <div className="space-y-2">
       <p className="block text-sm font-medium text-slate-800">Account type</p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {roles.map(({ value: roleValue, label, description, icon: Icon }) => {
+      <div className="grid gap-3">
+        {visibleRoles.map(({ value: roleValue, label, description, icon: Icon }) => {
           const selected = value === roleValue;
 
           return (
