@@ -116,8 +116,14 @@ export function RegisterForm({
     <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_12px_40px_rgba(15,23,42,0.06)] sm:p-7">
       <div className="mb-6">
         <p className="text-sm font-medium uppercase tracking-[0.2em] text-violet-600">Join us</p>
-        <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-900">Create your account</h2>
-        <p className="mt-2 text-sm text-slate-600">Join the campus food ordering community.</p>
+        <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-900">
+          {form.role === "vendor" ? "Create your vendor account" : "Create your account"}
+        </h2>
+        <p className="mt-2 text-sm text-slate-600">
+          {form.role === "vendor"
+            ? "Set up your vendor account to manage your menu and incoming orders."
+            : "Join the campus food ordering community."}
+        </p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-5" noValidate>
