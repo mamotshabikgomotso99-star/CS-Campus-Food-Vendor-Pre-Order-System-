@@ -197,6 +197,15 @@ function createApp(pool) {
   }));
   app.use(express.json({ limit: '32kb' }));
 
+  app.get('/api/health', async (request, response) => {
+    try {
+      await pool.query('SELECT 1');
+      response.json({ success: true, status: 'ok' });
+    } catch {
+      response.status(503).json({ success: false, message: 'Service unavailable.' });
+    }
+  });
+
   const requireRole = (role) => async (request, response, next) => {
     try {
       const token = readCookie(request, SESSION_COOKIE);
