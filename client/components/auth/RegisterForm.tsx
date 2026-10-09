@@ -7,15 +7,10 @@ import { useState } from "react";
 import { registerUser } from "@/lib/api";
 import { AuthInput } from "@/components/auth/AuthInput";
 import { PasswordInput } from "@/components/auth/PasswordInput";
-import { RoleSelector } from "@/components/auth/RoleSelector";
 import {
   validateEmail,
   validateName,
   validatePassword,
-  validateRole,
-  validateStudentNumber,
-  validateVendorName,
-  type AccountRole,
 } from "@/lib/validations";
 
 type FormState = {
@@ -23,28 +18,18 @@ type FormState = {
   email: string;
   password: string;
   confirmPassword: string;
-  role: AccountRole | "";
   studentNumber: string;
-  vendorName: string;
   termsAccepted: boolean;
 };
 
-export function RegisterForm({
-  initialRole = "student",
-  showVendor = false,
-}: {
-  initialRole?: AccountRole;
-  showVendor?: boolean;
-}) {
+export function RegisterForm() {
   const router = useRouter();
   const [form, setForm] = useState<FormState>({
     fullName: "",
     email: "",
     password: "",
     confirmPassword: "",
-    role: initialRole,
     studentNumber: "",
-    vendorName: "",
     termsAccepted: false,
   });
   const [errors, setErrors] = useState<Partial<Record<keyof FormState | "general", string>>>({});
@@ -61,9 +46,6 @@ export function RegisterForm({
     const fullNameError = validateName(form.fullName, "full name");
     const emailError = validateEmail(form.email);
     const passwordError = validatePassword(form.password);
-    const roleError = validateRole(form.role);
-    const studentError = form.role === "student" ? validateStudentNumber(form.studentNumber) : "";
-    const vendorError = form.role === "vendor" ? validateVendorName(form.vendorName) : "";
 
     if (fullNameError) nextErrors.fullName = fullNameError;
     if (emailError) nextErrors.email = emailError;
@@ -71,9 +53,6 @@ export function RegisterForm({
     if (form.password !== form.confirmPassword) {
       nextErrors.confirmPassword = "Passwords do not match.";
     }
-    if (roleError) nextErrors.role = roleError;
-    if (studentError) nextErrors.studentNumber = studentError;
-    if (vendorError) nextErrors.vendorName = vendorError;
     if (!form.termsAccepted) {
       nextErrors.termsAccepted = "Please accept the terms and conditions.";
     }
@@ -98,12 +77,11 @@ export function RegisterForm({
         email: form.email,
         password: form.password,
         confirmPassword: form.confirmPassword,
-        role: form.role as AccountRole,
-        studentNumber: form.role === "student" ? form.studentNumber : undefined,
-        vendorName: form.role === "vendor" ? form.vendorName : undefined,
+        role: "student",
+        studentNumber: form.studentNumber.trim() || undefined,
       });
 
-      router.push(form.role === "vendor" ? "/vendor/login" : "/verify-email");
+      router.push("/verify-email");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Registration failed. Please try again.";
       setErrors({ general: message });
@@ -117,12 +95,10 @@ export function RegisterForm({
       <div className="mb-6">
         <p className="text-sm font-medium uppercase tracking-[0.2em] text-violet-600">Join us</p>
         <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-900">
-          {form.role === "vendor" ? "Create your vendor account" : "Create your account"}
+          Create your account
         </h2>
         <p className="mt-2 text-sm text-slate-600">
-          {form.role === "vendor"
-            ? "Set up your vendor account to manage your menu and incoming orders."
-            : "Join the campus food ordering community."}
+          Join the campus food ordering community.
         </p>
       </div>
 
@@ -149,36 +125,15 @@ export function RegisterForm({
           onChange={(event) => updateField("email", event.target.value)}
         />
 
-        <RoleSelector
-          value={form.role}
-          onChange={(value) => updateField("role", value)}
-          error={errors.role}
-          showVendor={showVendor}
+        <AuthInput
+          label="Student number (optional)"
+          type="text"
+          name="studentNumber"
+          placeholder="Enter your student number"
+          value={form.studentNumber}
+          error={errors.studentNumber}
+          onChange={(event) => updateField("studentNumber", event.target.value)}
         />
-
-        {form.role === "student" ? (
-          <AuthInput
-            label="Student number"
-            type="text"
-            name="studentNumber"
-            placeholder="Enter your student number"
-            value={form.studentNumber}
-            error={errors.studentNumber}
-            onChange={(event) => updateField("studentNumber", event.target.value)}
-          />
-        ) : null}
-
-        {form.role === "vendor" ? (
-          <AuthInput
-            label="Vendor name"
-            type="text"
-            name="vendorName"
-            placeholder="Enter your vendor name"
-            value={form.vendorName}
-            error={errors.vendorName}
-            onChange={(event) => updateField("vendorName", event.target.value)}
-          />
-        ) : null}
 
         <PasswordInput
           label="Password"
@@ -239,21 +194,12 @@ export function RegisterForm({
 
         <p className="text-center text-sm text-slate-600">
           Already have an account? {" "}
-          <Link href={form.role === "vendor" ? "/vendor/login" : "/login"} className="font-semibold text-violet-700 hover:text-violet-800">
+          <Link href="/login" className="font-semibold text-violet-700 hover:text-violet-800">
             Log in
           </Link>
         </p>
       </form>
 
-      <Link
-        href={form.role === "vendor" ? "/register" : "/register?role=vendor"}
-        className="fixed bottom-4 right-4 z-20 inline-flex items-center gap-1.5 rounded-full border border-violet-100 bg-white/75 px-2.5 py-1.5 text-[11px] font-medium text-violet-700 shadow-[0_4px_12px_rgba(124,58,237,0.06)] backdrop-blur-sm transition hover:border-violet-200 hover:bg-white hover:text-violet-800"
-      >
-        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-violet-50 text-[9px] leading-none text-violet-700">
-          {form.role === "vendor" ? "S" : "V"}
-        </span>
-        {form.role === "vendor" ? "Student" : "Vendor"}
-      </Link>
     </div>
   );
 }
