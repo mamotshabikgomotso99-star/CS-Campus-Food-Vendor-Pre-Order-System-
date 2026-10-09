@@ -1,13 +1,16 @@
+import { redirect } from "next/navigation";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { RegisterForm } from "@/components/auth/RegisterForm";
 
 export default async function RegisterPage({ searchParams }: PageProps<"/register">) {
   const { role } = await searchParams;
-  const initialRole = role === "vendor" ? "vendor" : "student";
+  if (role === "vendor") {
+    redirect("/register");
+  }
 
   return (
-    <AuthLayout showBrandIcon={initialRole !== "vendor"}>
-      <RegisterForm initialRole={initialRole} showVendor={false} />
+    <AuthLayout>
+      <RegisterForm />
     </AuthLayout>
   );
 }

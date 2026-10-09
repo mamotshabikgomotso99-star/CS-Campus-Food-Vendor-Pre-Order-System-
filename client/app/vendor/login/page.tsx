@@ -1,10 +1,5 @@
-import { AuthLayout } from "@/components/auth/AuthLayout";
-import { LoginForm } from "@/components/auth/LoginForm";
+import { redirect } from "next/navigation";
 
 export default function VendorLoginPage() {
-  return (
-    <AuthLayout>
-      <LoginForm role="vendor" />
-    </AuthLayout>
-  );
+  redirect("/login");
 }

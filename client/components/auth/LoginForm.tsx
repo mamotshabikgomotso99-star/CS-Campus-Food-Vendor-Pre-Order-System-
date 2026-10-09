@@ -6,15 +6,11 @@ import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { loginUser } from "@/lib/api";
 import { saveAuthIdentity } from "@/lib/auth-session";
-import {
-  validateEmail,
-  validatePassword,
-  type AccountRole,
-} from "@/lib/validations";
+import { validateEmail, validatePassword } from "@/lib/validations";
 import { AuthInput } from "@/components/auth/AuthInput";
 import { PasswordInput } from "@/components/auth/PasswordInput";
 
-export function LoginForm({ role = "student" }: { role?: AccountRole }) {
+export function LoginForm() {
   const router = useRouter();
   const [form, setForm] = useState({ email: "", password: "", remember: true });
   const [errors, setErrors] = useState<{ email?: string; password?: string; general?: string }>({});
@@ -54,12 +50,11 @@ export function LoginForm({ role = "student" }: { role?: AccountRole }) {
         remember: form.remember,
       });
 
-      if (response.role !== role) {
-        const portalName = role === "vendor" ? "vendor" : "student";
-        throw new Error(`This account is not registered for the ${portalName} portal.`);
+      const accountRole = response.role ?? response.user?.role;
+      if (accountRole !== "student" && accountRole !== "vendor") {
+        throw new Error("Unable to determine the account type for this login.");
       }
 
-      const accountRole = role;
       saveAuthIdentity({
         fullName: response.user?.fullName?.trim() || form.email.split("@")[0],
         email: response.user?.email ?? form.email.trim(),
@@ -82,10 +77,10 @@ export function LoginForm({ role = "student" }: { role?: AccountRole }) {
           Sign in
         </p>
         <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-900">
-          {role === "vendor" ? "Vendor sign in" : "Welcome back!"}
+          Welcome back!
         </h2>
         <p className="mt-2 text-sm text-slate-600">
-          {role === "vendor" ? "Sign in to your vendor account." : "Sign in to your student account."}
+          Sign in to your Campus Eats account.
         </p>
       </div>
 
@@ -148,27 +143,13 @@ export function LoginForm({ role = "student" }: { role?: AccountRole }) {
           )}
         </button>
 
-        {role === "student" ? (
-          <p className="text-center text-sm text-slate-600">
-            Don&apos;t have an account? {" "}
-            <Link href="/register" className="font-semibold text-violet-700 hover:text-violet-800">
-              Sign up
-            </Link>
-          </p>
-        ) : null}
+        <p className="text-center text-sm text-slate-600">
+          Don&apos;t have an account? {" "}
+          <Link href="/register" className="font-semibold text-violet-700 hover:text-violet-800">
+            Sign up
+          </Link>
+        </p>
       </form>
-
-      {role === "student" ? (
-        <Link
-          href="/vendor/login"
-          className="fixed bottom-4 right-4 z-20 inline-flex items-center gap-1.5 rounded-full border border-violet-100 bg-white/70 px-2.5 py-1.5 text-[11px] font-medium text-violet-700 shadow-[0_4px_12px_rgba(124,58,237,0.06)] backdrop-blur-sm transition hover:border-violet-200 hover:bg-white hover:text-violet-800"
-        >
-          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-violet-50 text-[9px] leading-none text-violet-700">
-            V
-          </span>
-          Vendor
-        </Link>
-      ) : null}
     </div>
   );
 }

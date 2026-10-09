@@ -253,13 +253,18 @@ function createApp(pool) {
     const email = typeof request.body.email === 'string' ? request.body.email.trim().toLowerCase() : '';
     const password = typeof request.body.password === 'string' ? request.body.password : '';
     const role = request.body.role;
-    const studentNumber = typeof request.body.studentNumber === 'string' ? request.body.studentNumber.trim() : '';
-    const vendorName = typeof request.body.vendorName === 'string' ? request.body.vendorName.trim() : '';
+    const studentNumber = typeof request.body.studentNumber === 'string'
+      ? request.body.studentNumber.trim() || null
+      : null;
+
+    if (role === 'vendor') {
+      response.status(403).json({ success: false, message: 'Vendor accounts must be provisioned by an administrator.' });
+      return;
+    }
 
     if (
       !fullName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 8 ||
-      !['student', 'vendor'].includes(role) || (role === 'student' && !studentNumber) ||
-      (role === 'vendor' && !vendorName) ||
+      role !== 'student' ||
       (request.body.confirmPassword && request.body.confirmPassword !== password)
     ) {
       response.status(400).json({ success: false, message: 'Please provide valid account details.' });
@@ -274,28 +279,8 @@ function createApp(pool) {
       await client.query(
         `INSERT INTO users (id, full_name, email, password_hash, role, student_number)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [userId, fullName, email, passwordHash, role, role === 'student' ? studentNumber : null],
+        [userId, fullName, email, passwordHash, role, studentNumber],
       );
-
-      if (role === 'vendor') {
-        const existingVendor = await client.query(
-          'SELECT id, owner_user_id FROM vendors WHERE LOWER(name) = LOWER($1) FOR UPDATE',
-          [vendorName],
-        );
-        if (existingVendor.rows[0]?.owner_user_id) {
-          await client.query('ROLLBACK');
-          response.status(409).json({ success: false, message: 'This vendor profile is already connected to an account.' });
-          return;
-        }
-        if (existingVendor.rows[0]) {
-          await client.query('UPDATE vendors SET owner_user_id = $1 WHERE id = $2', [userId, existingVendor.rows[0].id]);
-        } else {
-          await client.query(
-            'INSERT INTO vendors (id, name, category, owner_user_id) VALUES ($1, $2, $3, $4)',
-            [`vendor-${userId}`, vendorName, 'Other', userId],
-          );
-        }
-      }
 
       await client.query('COMMIT');
       response.status(201).json({ success: true, message: 'Account created. Please sign in to continue.', role });
