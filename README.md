@@ -20,6 +20,8 @@ Open `http://127.0.0.1:3000`. The API applies versioned SQL migrations from `ser
 
 The frontend can remain on Vercel while the Express API runs as a separate Render web service. The root `render.yaml` defines the API service and prompts for `DATABASE_URL` and `CLIENT_URL` without storing their values in Git.
 
+For the Vercel project, set the Root Directory to `client`, use Node.js 22, and set `NEXT_PUBLIC_API_URL` to the public API base URL with no `/api` suffix. Configure it for every environment you intend to deploy, then redeploy after changing it.
+
 1. Push the repository to your Git provider and create a Render Blueprint from it.
 2. For `DATABASE_URL`, enter a production PostgreSQL connection string in Render's secure configuration. Do not use a local database URL or commit the value.
 3. For `CLIENT_URL`, enter the exact frontend origin, without a trailing slash: `https://cs-campus-food-vendor-pre-order-sys-ten.vercel.app`.
@@ -28,6 +30,8 @@ The frontend can remain on Vercel while the Express API runs as a separate Rende
 6. Confirm the browser sends API requests to the Render host and that the API returns the configured CORS origin and `Access-Control-Allow-Credentials: true` for credentialed requests.
 
 The Blueprint uses Render's free web-service plan to avoid provisioning a paid service without approval. Free services can sleep while idle. A production launch needs an explicitly selected database and hosting plan, verified backup/recovery, and review of cross-site session-cookie behavior for the chosen frontend and API domains.
+
+**Authentication deployment blocker:** the current session cookie is `SameSite=Lax`. A Vercel `*.vercel.app` frontend calling a Render `*.onrender.com` API is cross-site, so browser credentialed `fetch` requests will not reliably send that cookie. Before enabling authenticated production workflows, choose same-site custom domains for the frontend and API, or approve and implement a cross-site cookie policy (`SameSite=None; Secure`) with appropriate CSRF protections. Do not treat a successful CORS preflight as proof that session cookies work.
 
 ## First-order discount
 
@@ -38,10 +42,11 @@ The first successfully created student order receives 20% off its food subtotal.
 ```powershell
 npm --prefix server test
 npm --prefix client run lint
+npm --prefix client run typecheck
 npm --prefix client run build
 ```
 
-The server integration test creates uniquely named test accounts, vendors, menu items, and orders, then removes them afterward. Run it only against a development/test database configured for `DATABASE_URL`, never production.
+GitHub Actions runs the client lint, typecheck, and production build checks plus the server tests on pushes and pull requests. The database-backed order integration test is skipped in CI because no `DATABASE_URL` is supplied. Locally, that integration test creates uniquely named test accounts, vendors, menu items, and orders, then removes them afterward. Run it only against a disposable development/test database configured for `DATABASE_URL`, never production.
 
 ## Prototype limitations
 
