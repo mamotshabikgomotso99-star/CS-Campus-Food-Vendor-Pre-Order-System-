@@ -19,6 +19,19 @@ async function ask(question) {
   }
 }
 
+const cors = require("cors");
+
+app.use(cors({
+  origin: [
+    "https://client-self-rho-42.vercel.app"
+  ],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
+app.use(express.json());
+npm install cors
+
 function askHidden(question) {
   if (!stdin.isTTY || typeof stdin.setRawMode !== 'function') {
     throw new Error('Run this command in an interactive terminal to enter passwords securely.');
