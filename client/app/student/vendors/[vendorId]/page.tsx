@@ -1,3 +1,4 @@
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { StudentVendorMenu } from "@/components/menu/StudentVendorMenu";
 
 export default async function StudentVendorMenuPage({
@@ -6,5 +7,9 @@ export default async function StudentVendorMenuPage({
   params: Promise<{ vendorId: string }>;
 }) {
   const { vendorId } = await params;
-  return <StudentVendorMenu vendorId={vendorId} />;
+  return (
+    <RequireAuth role="student">
+      <StudentVendorMenu vendorId={vendorId} />
+    </RequireAuth>
+  );
 }

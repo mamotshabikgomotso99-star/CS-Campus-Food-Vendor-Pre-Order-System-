@@ -60,8 +60,7 @@ export function LoginForm() {
         email: response.user?.email ?? form.email.trim(),
         role: accountRole,
       });
-      const redirectPath = accountRole === "vendor" ? "/vendor/dashboard" : "/student/dashboard";
-      router.push(redirectPath);
+      router.push("/dashboard");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Login failed. Please try again.";
       setErrors({ general: message });

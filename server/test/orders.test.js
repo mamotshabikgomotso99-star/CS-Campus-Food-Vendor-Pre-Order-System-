@@ -16,6 +16,7 @@ if (process.loadEnvFile && fs.existsSync(envPath)) {
 
 const { createApp } = require('../app');
 const { createPool, initializeDatabase } = require('../database');
+const { createVendorLogin } = require('../vendor-provisioning');
 
 function crc32(buffer) {
   let crc = 0xffffffff;
@@ -72,13 +73,16 @@ test('first-order discount is server-owned, one-time, and account-specific', {
     { email: `order-test-concurrent-${uniqueId}@example.invalid`, studentNumber: `test-concurrent-${uniqueId}` },
   ];
   const vendorAccount = {
+    vendorId: `order-test-vendor-${uniqueId}`,
     email: `order-test-vendor-${uniqueId}@example.invalid`,
     vendorName: `Order Test Vendor ${uniqueId}`,
   };
   const otherVendorAccount = {
+    vendorId: `order-test-other-vendor-${uniqueId}`,
     email: `order-test-other-vendor-${uniqueId}@example.invalid`,
     vendorName: `Other Order Test Vendor ${uniqueId}`,
   };
+  const vendorIds = [vendorAccount.vendorId, otherVendorAccount.vendorId];
 
   context.after(async () => {
     try {
@@ -113,16 +117,22 @@ test('first-order discount is server-owned, one-time, and account-specific', {
         [emailList],
       );
       await pool.query(
-        'DELETE FROM menu_items WHERE vendor_id IN (SELECT id FROM vendors WHERE owner_user_id IN (SELECT id FROM users WHERE email = ANY($1::text[])))',
-        [emailList],
+        `DELETE FROM menu_items
+          WHERE vendor_id = ANY($1::text[])
+             OR vendor_id IN (SELECT id FROM vendors WHERE owner_user_id IN (SELECT id FROM users WHERE email = ANY($2::text[])))`,
+        [vendorIds, emailList],
       );
       await pool.query(
-        'DELETE FROM collection_slots WHERE vendor_id IN (SELECT id FROM vendors WHERE owner_user_id IN (SELECT id FROM users WHERE email = ANY($1::text[])))',
-        [emailList],
+        `DELETE FROM collection_slots
+          WHERE vendor_id = ANY($1::text[])
+             OR vendor_id IN (SELECT id FROM vendors WHERE owner_user_id IN (SELECT id FROM users WHERE email = ANY($2::text[])))`,
+        [vendorIds, emailList],
       );
       await pool.query(
-        'DELETE FROM vendors WHERE owner_user_id IN (SELECT id FROM users WHERE email = ANY($1::text[]))',
-        [emailList],
+        `DELETE FROM vendors
+          WHERE id = ANY($1::text[])
+             OR owner_user_id IN (SELECT id FROM users WHERE email = ANY($2::text[]))`,
+        [vendorIds, emailList],
       );
       await pool.query(
         'DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE email = ANY($1::text[]))',
@@ -192,18 +202,16 @@ test('first-order discount is server-owned, one-time, and account-specific', {
   };
 
   const registerVendorAndLogin = async (account = vendorAccount) => {
-    const registration = await send('/api/auth/register', {
-      method: 'POST',
-      payload: {
-        fullName: 'Order Test Vendor',
-        email: account.email,
-        password: 'test-password-123',
-        confirmPassword: 'test-password-123',
-        role: 'vendor',
-        vendorName: account.vendorName,
-      },
+    await pool.query(
+      'INSERT INTO vendors (id, name, category) VALUES ($1, $2, $3)',
+      [account.vendorId, account.vendorName, 'Test'],
+    );
+    await createVendorLogin(pool, {
+      vendorId: account.vendorId,
+      fullName: 'Order Test Vendor',
+      email: account.email,
+      password: 'test-password-123',
     });
-    assert.equal(registration.response.status, 201);
 
     const login = await send('/api/auth/login', {
       method: 'POST',

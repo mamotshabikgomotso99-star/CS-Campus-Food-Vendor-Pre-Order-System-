@@ -1,8 +1,10 @@
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { VendorMenuManager } from "@/components/menu/VendorMenuManager";
 
-
-
-
 export default function VendorMenuPage() {
-  return <VendorMenuManager />;
+  return (
+    <RequireAuth role="vendor">
+      <VendorMenuManager />
+    </RequireAuth>
+  );
 }

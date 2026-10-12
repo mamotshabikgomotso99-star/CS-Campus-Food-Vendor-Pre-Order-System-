@@ -16,26 +16,21 @@ import { clearAuthIdentity, getIdentityInitials, getIdentityName } from "@/lib/a
 import { useAuthIdentity } from "@/components/auth/AuthIdentityProvider";
 import { logoutUser } from "@/lib/api";
 
-const studentLinks = [
-  { href: "/student/dashboard", label: "Dashboard", icon: LayoutGrid },
-  { href: "/student/vendors", label: "Vendors", icon: Store },
-  { href: "/student/orders", label: "Orders", icon: ClipboardList },
-  { href: "/student/profile", label: "Profile", icon: UserCircle },
-];
-
-const vendorLinks = [
-  { href: "/vendor/dashboard", label: "Dashboard", icon: LayoutGrid },
-  { href: "/vendor/menu", label: "Menu", icon: UtensilsCrossed },
-  { href: "/vendor/orders", label: "Orders", icon: ClipboardCheck },
-  { href: "/vendor/profile", label: "Profile", icon: UserCircle },
-];
-
 export function Sidebar({ role }: { role: "student" | "vendor" }) {
   const pathname = usePathname();
   const router = useRouter();
   const identity = useAuthIdentity();
   const displayName = getIdentityName(identity);
-  const links = role === "student" ? studentLinks : vendorLinks;
+  const links = [
+    { href: "/dashboard", label: "Dashboard", icon: LayoutGrid },
+    {
+      href: "/dashboard",
+      label: role === "student" ? "Vendors" : "Menu",
+      icon: role === "student" ? Store : UtensilsCrossed,
+    },
+    { href: "/dashboard", label: "Orders", icon: role === "student" ? ClipboardList : ClipboardCheck },
+    { href: "/dashboard", label: "Profile", icon: UserCircle },
+  ];
 
   const handleLogout = async () => {
     try {
