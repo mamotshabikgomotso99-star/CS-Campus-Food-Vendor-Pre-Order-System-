@@ -2,6 +2,7 @@
 
 import { Check, Search } from "lucide-react";
 import { useEffect, useState } from "react";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { getVendorOrders, updateVendorOrderStatus, type ApiOrder } from "@/lib/api";
@@ -85,11 +86,12 @@ export default function VendorOrdersPage() {
   const visibleOrders = (orders ?? []).filter((order) => order.id.toLowerCase().includes(searchTerm.trim().toLowerCase()));
 
   return (
-    <DashboardLayout
-      role="vendor"
-      title="Order Management"
-      subtitle="Review incoming orders and update collection status."
-    >
+    <RequireAuth role="vendor">
+      <DashboardLayout
+        role="vendor"
+        title="Order Management"
+        subtitle="Review incoming orders and update collection status."
+      >
       <section className="rounded-[28px] border border-violet-100 bg-white p-4 shadow-sm sm:p-5">
         <div className="mb-4 relative w-full max-w-md">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -169,6 +171,7 @@ export default function VendorOrdersPage() {
         </div> : null}
         {orders && orders.length > 0 && visibleOrders.length === 0 ? <p className="py-6 text-center text-sm text-slate-600">No orders match that search.</p> : null}
       </section>
-    </DashboardLayout>
+      </DashboardLayout>
+    </RequireAuth>
   );
 }

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useEffect } from "react";
 import Link from "next/link";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { getStudentOrders, type ApiOrder } from "@/lib/api";
@@ -47,11 +48,12 @@ export default function StudentOrdersPage() {
   );
 
   return (
-    <DashboardLayout
-      role="student"
-      title="My Orders"
-      subtitle="Track your pre-orders and collection times."
-    >
+    <RequireAuth role="student">
+      <DashboardLayout
+        role="student"
+        title="My Orders"
+        subtitle="Track your pre-orders and collection times."
+      >
       <section className="space-y-5">
         {error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p> : null}
         {orders === null && !error ? <p className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600">Loading your orders...</p> : null}
@@ -186,7 +188,8 @@ export default function StudentOrdersPage() {
         ) : null}
         </> : null}
       </section>
-    </DashboardLayout>
+      </DashboardLayout>
+    </RequireAuth>
   );
 }
 

@@ -1,15 +1,17 @@
 import { Search, SlidersHorizontal, Star } from "lucide-react";
 import Link from "next/link";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { featuredVendors, vendorMenuById } from "@/lib/dashboard-data";
 
 export default function StudentVendorsPage() {
   return (
-    <DashboardLayout
-      role="student"
-      title="Explore Vendors"
-      subtitle="Browse campus food options and pick the one that suits your cravings."
-    >
+    <RequireAuth role="student">
+      <DashboardLayout
+        role="student"
+        title="Explore Vendors"
+        subtitle="Browse campus food options and pick the one that suits your cravings."
+      >
       <section className="rounded-[28px] border border-violet-100 bg-white p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="relative w-full md:max-w-md">
@@ -67,6 +69,7 @@ export default function StudentVendorsPage() {
           </div>
         ))}
       </section>
-    </DashboardLayout>
+      </DashboardLayout>
+    </RequireAuth>
   );
 }

@@ -1,6 +1,7 @@
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { StudentDashboardGreeting } from "@/components/auth/AuthIdentityProvider";
 import { StudentOrderOverview } from "@/components/orders/StudentOrderOverview";
 import {
@@ -10,11 +11,12 @@ import {
 
 export default function StudentDashboardPage() {
   return (
-    <DashboardLayout
-      role="student"
-      title={<StudentDashboardGreeting />}
-      subtitle="Find your favourite campus meals and skip the queue."
-    >
+    <RequireAuth role="student">
+      <DashboardLayout
+        role="student"
+        title={<StudentDashboardGreeting />}
+        subtitle="Find your favourite campus meals and skip the queue."
+      >
       <section className="rounded-[28px] border border-white/60 bg-gradient-to-r from-[#B8B7E5] to-[#D8D7F2] p-5 text-slate-900 shadow-[0_18px_40px_rgba(124,58,237,0.12)] sm:p-6">
         <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
           <div>
@@ -81,6 +83,7 @@ export default function StudentDashboardPage() {
 
       </section>
 
-    </DashboardLayout>
+      </DashboardLayout>
+    </RequireAuth>
   );
 }

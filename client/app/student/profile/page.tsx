@@ -1,15 +1,17 @@
 import { Mail } from "lucide-react";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { SignedInEmail, SignedInName } from "@/components/auth/AuthIdentityProvider";
 import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
 
 export default function StudentProfilePage() {
   return (
-    <DashboardLayout
-      role="student"
-      title="Profile"
-      subtitle="Manage your account details and preferences."
-    >
+    <RequireAuth role="student">
+      <DashboardLayout
+        role="student"
+        title="Profile"
+        subtitle="Manage your account details and preferences."
+      >
       <section className="rounded-[28px] border border-violet-100 bg-white p-4 shadow-sm sm:p-6">
         <div className="flex flex-col gap-6 md:flex-row md:items-center">
           <ProfilePhoto role="student" />
@@ -23,6 +25,7 @@ export default function StudentProfilePage() {
           </div>
         </div>
       </section>
-    </DashboardLayout>
+      </DashboardLayout>
+    </RequireAuth>
   );
 }

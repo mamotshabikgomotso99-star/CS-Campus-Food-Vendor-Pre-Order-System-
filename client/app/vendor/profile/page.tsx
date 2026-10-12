@@ -1,14 +1,16 @@
 import { Mail } from "lucide-react";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
 
 export default function VendorProfilePage() {
   return (
-    <DashboardLayout
-      role="vendor"
-      title="Vendor Profile"
-      subtitle="Update your vendor information and business details."
-    >
+    <RequireAuth role="vendor">
+      <DashboardLayout
+        role="vendor"
+        title="Vendor Profile"
+        subtitle="Update your vendor information and business details."
+      >
       <section className="rounded-[28px] border border-violet-100 bg-white p-4 shadow-sm sm:p-6">
         <div className="flex flex-col gap-6 md:flex-row md:items-center">
           <ProfilePhoto role="vendor" />
@@ -22,6 +24,7 @@ export default function VendorProfilePage() {
           </div>
         </div>
       </section>
-    </DashboardLayout>
+      </DashboardLayout>
+    </RequireAuth>
   );
 }
