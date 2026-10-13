@@ -84,11 +84,11 @@ export function StudentOrderOverview() {
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
               <thead><tr className="border-b border-slate-200 text-slate-500">
-                <th className="pb-3 pr-4 font-medium">Order ID</th><th className="pb-3 pr-4 font-medium">Vendor</th><th className="pb-3 pr-4 font-medium">Items</th><th className="pb-3 pr-4 font-medium">Total</th><th className="pb-3 pr-4 font-medium">Collection</th><th className="pb-3 pr-4 font-medium">Status</th>
+                <th className="pb-3 pr-4 font-medium">Order ID</th><th className="pb-3 pr-4 font-medium">Vendor</th><th className="pb-3 pr-4 font-medium">Items</th><th className="pb-3 pr-4 font-medium">Total</th><th className="pb-3 pr-4 font-medium">Collection</th><th className="pb-3 pr-4 font-medium">Payment</th><th className="pb-3 pr-4 font-medium">Status</th>
               </tr></thead>
               <tbody>{orders.slice(0, 5).map((order) => (
                 <tr key={order.orderId} className="border-b border-slate-100 last:border-b-0">
-                  <td className="py-3 pr-4 font-medium text-slate-800">{order.id}</td><td className="py-3 pr-4 text-slate-600">{order.vendor}</td><td className="py-3 pr-4 text-slate-600">{order.items}</td><td className="py-3 pr-4 font-medium text-slate-800">{formatMoney(order.totalCents)}</td><td className="py-3 pr-4 text-slate-600">{new Date(order.collectionAt).toLocaleString()}</td><td className="py-3 pr-4"><StatusBadge status={order.status} /></td>
+                  <td className="py-3 pr-4 font-medium text-slate-800">{order.id}</td><td className="py-3 pr-4 text-slate-600">{order.vendor}</td><td className="py-3 pr-4 text-slate-600">{order.items}</td><td className="py-3 pr-4 font-medium text-slate-800">{formatMoney(order.totalCents)}</td><td className="py-3 pr-4 text-slate-600">{new Date(order.collectionAt).toLocaleString()}</td><td className="py-3 pr-4 capitalize text-slate-600">{order.paymentStatus === "unverified" ? "Not recorded" : order.paymentStatus}</td><td className="py-3 pr-4"><StatusBadge status={order.status} /></td>
                 </tr>
               ))}</tbody>
             </table>

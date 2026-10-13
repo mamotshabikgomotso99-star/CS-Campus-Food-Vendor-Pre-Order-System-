@@ -87,9 +87,12 @@ export default function StudentOrdersPage() {
                         <p className="text-xs uppercase tracking-[0.16em] text-slate-500">{order.id}</p>
                         <p className="mt-1 text-lg font-semibold text-slate-900">{order.vendor}</p>
                       </div>
-                      <StatusBadge status={order.status} />
+                      <div className="flex flex-wrap items-center gap-3">
+                        <StatusBadge status={order.status} />
+                        <span className="text-xs font-medium capitalize text-slate-600">Payment: {formatPaymentStatus(order.paymentStatus)}</span>
+                      </div>
                     </div>
-                    <div className="mt-4 grid gap-3 md:grid-cols-4">
+                    <div className="mt-4 grid gap-3 md:grid-cols-5">
                       <div>
                         <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Items</p>
                         <p className="mt-1 text-sm text-slate-700">{order.items}</p>
@@ -101,6 +104,19 @@ export default function StudentOrdersPage() {
                       <div>
                         <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Collection</p>
                         <p className="mt-1 text-sm text-slate-700">{formatCollection(order.collectionAt)}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Payment</p>
+                        {order.paymentStatus === "pending" && order.paymentId ? (
+                          <Link
+                            href={`/student/orders/payment-result?paymentId=${encodeURIComponent(order.paymentId)}`}
+                            className="mt-1 inline-flex text-sm font-semibold text-violet-700 hover:text-violet-800"
+                          >
+                            Resume payment
+                          </Link>
+                        ) : (
+                          <p className="mt-1 text-sm capitalize text-slate-700">{formatPaymentStatus(order.paymentStatus)}</p>
+                        )}
                       </div>
                       <div className="md:text-right">
                         <button
@@ -205,4 +221,8 @@ function formatCollection(collectionAt: string) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function formatPaymentStatus(status: ApiOrder["paymentStatus"]) {
+  return status === "unverified" ? "Not recorded" : status;
 }

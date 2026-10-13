@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const { deflateSync } = require('node:zlib');
+const Stripe = require('stripe');
 
 const envPath = path.join(__dirname, '..', '.env');
 if (process.loadEnvFile && fs.existsSync(envPath)) {
@@ -58,7 +59,40 @@ test('first-order discount is server-owned, one-time, and account-specific', {
 }, async (context) => {
   const pool = createPool();
   await initializeDatabase(pool);
-  const server = createApp(pool).listen(0, '127.0.0.1');
+  const stripeSdk = new Stripe('sk_test_campus_eats');
+  const stripeWebhookSecret = 'whsec_campus_eats_test';
+  const stripeSessions = new Map();
+  const stripeEventIds = [];
+  let stripeSessionCount = 0;
+  const stripeClient = {
+    checkout: {
+      sessions: {
+        async create(parameters) {
+          stripeSessionCount += 1;
+          const id = `cs_test_${stripeSessionCount}`;
+          const session = {
+            id,
+            url: `https://checkout.stripe.test/${id}`,
+            status: 'open',
+            payment_status: 'unpaid',
+            amount_total: parameters.line_items[0].price_data.unit_amount,
+            currency: parameters.line_items[0].price_data.currency,
+            metadata: parameters.metadata,
+            payment_intent: null,
+          };
+          stripeSessions.set(id, session);
+          return session;
+        },
+        async retrieve(sessionId) {
+          return stripeSessions.get(sessionId);
+        },
+      },
+    },
+    webhooks: {
+      constructEvent: (...args) => stripeSdk.webhooks.constructEvent(...args),
+    },
+  };
+  const server = createApp(pool, { stripeClient, webhookSecret: stripeWebhookSecret }).listen(0, '127.0.0.1');
   await new Promise((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
@@ -71,6 +105,7 @@ test('first-order discount is server-owned, one-time, and account-specific', {
     { email: `order-test-${uniqueId}@example.invalid`, studentNumber: `test-${uniqueId}` },
     { email: `order-test-second-${uniqueId}@example.invalid`, studentNumber: `test-second-${uniqueId}` },
     { email: `order-test-concurrent-${uniqueId}@example.invalid`, studentNumber: `test-concurrent-${uniqueId}` },
+    { email: `order-test-legacy-${uniqueId}@example.invalid`, studentNumber: `test-legacy-${uniqueId}` },
   ];
   const vendorAccount = {
     vendorId: `order-test-vendor-${uniqueId}`,
@@ -93,8 +128,12 @@ test('first-order discount is server-owned, one-time, and account-specific', {
             SET reserved = GREATEST(0, slot.reserved - order_counts.count)
            FROM (
              SELECT collection_slot_id, COUNT(*)::INTEGER AS count
-               FROM orders
+               FROM orders o
               WHERE student_id IN (SELECT id FROM users WHERE email = ANY($1::text[]))
+                AND NOT EXISTS (
+                  SELECT 1 FROM order_payments p
+                   WHERE p.order_id = o.id AND p.slot_released_at IS NOT NULL
+                )
               GROUP BY collection_slot_id
            ) order_counts
           WHERE slot.id = order_counts.collection_slot_id`,
@@ -106,6 +145,9 @@ test('first-order discount is server-owned, one-time, and account-specific', {
          )`,
         [emailList],
       );
+      if (stripeEventIds.length > 0) {
+        await pool.query('DELETE FROM stripe_webhook_events WHERE event_id = ANY($1::text[])', [stripeEventIds]);
+      }
       await pool.query(
         `DELETE FROM order_items WHERE order_id IN (
            SELECT id FROM orders WHERE student_id IN (SELECT id FROM users WHERE email = ANY($1::text[]))
@@ -159,6 +201,47 @@ test('first-order discount is server-owned, one-time, and account-specific', {
       body: payload ? JSON.stringify(payload) : undefined,
     });
     return { response, data: await response.json() };
+  };
+
+  const sendStripeEvent = async (type, session, {
+    invalidSignature = false,
+    eventId = `evt_${randomUUID().replaceAll('-', '')}`,
+  } = {}) => {
+    const event = { id: eventId, type, data: { object: session } };
+    stripeEventIds.push(event.id);
+    const rawBody = JSON.stringify(event);
+    const signature = stripeSdk.webhooks.generateTestHeaderString({
+      payload: rawBody,
+      secret: invalidSignature ? 'whsec_wrong_secret' : stripeWebhookSecret,
+    });
+    const response = await fetch(`${baseUrl}/api/payments/stripe/webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Stripe-Signature': signature },
+      body: rawBody,
+    });
+    return { response, data: await response.json() };
+  };
+
+  const completePayment = async (paymentId, options) => {
+    const session = [...stripeSessions.values()].find((entry) => entry.metadata.paymentId === paymentId);
+    assert.ok(session, 'expected a Stripe Checkout Session');
+    session.status = 'complete';
+    session.payment_status = 'paid';
+    session.payment_intent = `pi_test_${session.id}`;
+    return sendStripeEvent('checkout.session.completed', session, options);
+  };
+
+  const placePaidOrder = async (cookie, payload) => {
+    const checkout = await send('/api/student/payments/checkout', {
+      method: 'POST', cookie, payload,
+    });
+    if (checkout.data.paymentStatus === 'pending' && checkout.data.checkoutUrl) {
+      const webhook = await completePayment(checkout.data.paymentId);
+      assert.equal(webhook.response.status, 200);
+    }
+    if (!checkout.data.paymentId) return checkout;
+    const payment = await send(`/api/student/payments/${checkout.data.paymentId}`, { cookie });
+    return { response: checkout.response, data: { ...checkout.data, order: payment.data.order } };
   };
 
   const sendMultipart = async (route, { method = 'POST', fields = {}, file, cookie } = {}) => {
@@ -224,6 +307,10 @@ test('first-order discount is server-owned, one-time, and account-specific', {
   const firstCookie = await registerAndLogin(accounts[0]);
   const unauthorized = await send('/api/student/orders');
   assert.equal(unauthorized.response.status, 401);
+  const legacyCreate = await send('/api/student/orders', {
+    method: 'POST', cookie: firstCookie, payload: {},
+  });
+  assert.equal(legacyCreate.response.status, 410);
 
   const firstHistory = await send('/api/student/orders', { cookie: firstCookie });
   assert.equal(firstHistory.data.firstOrderDiscountEligible, true);
@@ -231,7 +318,7 @@ test('first-order discount is server-owned, one-time, and account-specific', {
 
   const slotResponse = await send('/api/collection-slots?vendorId=fresh-bites');
   assert.ok(slotResponse.data.slots.length >= 2);
-  const invalidOrder = await send('/api/student/orders', {
+  const invalidOrder = await send('/api/student/payments/checkout', {
     method: 'POST',
     cookie: firstCookie,
     payload: {
@@ -249,33 +336,24 @@ test('first-order discount is server-owned, one-time, and account-specific', {
     collectionSlotId: slotResponse.data.slots[0].id,
     idempotencyKey: randomUUID(),
   };
-  const firstOrder = await send('/api/student/orders', {
-    method: 'POST',
-    cookie: firstCookie,
-    payload: firstPayload,
-  });
+  const firstOrder = await placePaidOrder(firstCookie, firstPayload);
   assert.equal(firstOrder.response.status, 201);
   assert.equal(firstOrder.data.order.subtotalCents, 4500);
   assert.equal(firstOrder.data.order.discountCents, 900);
   assert.equal(firstOrder.data.order.serviceFeeCents, 500);
   assert.equal(firstOrder.data.order.totalCents, 4100);
+  const firstStripeSession = [...stripeSessions.values()].find((session) => session.metadata.paymentId === firstOrder.data.paymentId);
+  assert.equal(firstStripeSession.amount_total, 4100);
+  assert.equal(firstStripeSession.currency, 'zar');
 
-  const firstRetry = await send('/api/student/orders', {
-    method: 'POST',
-    cookie: firstCookie,
-    payload: firstPayload,
-  });
+  const firstRetry = await placePaidOrder(firstCookie, firstPayload);
   assert.equal(firstRetry.response.status, 200);
   assert.equal(firstRetry.data.order.orderId, firstOrder.data.order.orderId);
 
-  const secondOrder = await send('/api/student/orders', {
-    method: 'POST',
-    cookie: firstCookie,
-    payload: {
+  const secondOrder = await placePaidOrder(firstCookie, {
       items: [{ menuItemId: 'chicken-wrap', quantity: 1 }],
       collectionSlotId: slotResponse.data.slots[1].id,
       idempotencyKey: randomUUID(),
-    },
   });
   assert.equal(secondOrder.response.status, 201);
   assert.equal(secondOrder.data.order.discountCents, 0);
@@ -290,13 +368,31 @@ test('first-order discount is server-owned, one-time, and account-specific', {
   assert.equal(secondHistory.data.firstOrderDiscountEligible, true);
   assert.deepEqual(secondHistory.data.orders, []);
 
+  const legacyCookie = await registerAndLogin(accounts[3]);
+  const legacyUser = await pool.query('SELECT id FROM users WHERE email = $1', [accounts[3].email]);
+  const legacyOrderId = randomUUID();
+  const legacyOrderNumber = `CE-LEGACY-${randomUUID().slice(0, 8)}`;
+  const legacySlotId = slotResponse.data.slots[2].id;
+  await pool.query(
+    `INSERT INTO orders
+      (id, order_number, student_id, vendor_id, collection_slot_id,
+       subtotal_cents, discount_cents, service_fee_cents, total_cents,
+       status, idempotency_key, request_hash)
+     VALUES ($1, $2, $3, 'fresh-bites', $4, 4500, 900, 500, 4100, 'Pending', $5, $6)`,
+    [legacyOrderId, legacyOrderNumber, legacyUser.rows[0].id, legacySlotId, randomUUID(), 'legacy-order-hash'],
+  );
+  await pool.query('UPDATE collection_slots SET reserved = reserved + 1 WHERE id = $1', [legacySlotId]);
+  const legacyHistory = await send('/api/student/orders', { cookie: legacyCookie });
+  assert.equal(legacyHistory.data.firstOrderDiscountEligible, false);
+  assert.equal(legacyHistory.data.orders[0].paymentStatus, 'unverified');
+
   const roleCheck = await send('/api/vendor/orders', { cookie: firstCookie });
   assert.equal(roleCheck.response.status, 403);
 
   const concurrentCookie = await registerAndLogin(accounts[2]);
   const concurrentSlots = await send('/api/collection-slots?vendorId=fresh-bites');
   const concurrentOrders = await Promise.all(concurrentSlots.data.slots.slice(4, 6).map((slot) =>
-    send('/api/student/orders', {
+    send('/api/student/payments/checkout', {
       method: 'POST',
       cookie: concurrentCookie,
       payload: {
@@ -306,11 +402,19 @@ test('first-order discount is server-owned, one-time, and account-specific', {
       },
     }),
   ));
-  assert.ok(concurrentOrders.every(({ response }) => response.status === 201));
-  assert.deepEqual(
-    concurrentOrders.map(({ data }) => data.order.discountCents).sort((left, right) => left - right),
-    [0, 900],
-  );
+  assert.deepEqual(concurrentOrders.map(({ response }) => response.status).sort(), [201, 409]);
+  const concurrentFirst = concurrentOrders.find(({ response }) => response.status === 201);
+  const concurrentSession = [...stripeSessions.values()].find((session) => session.metadata.paymentId === concurrentFirst.data.paymentId);
+  assert.equal(concurrentSession.amount_total, 4100);
+  assert.equal((await completePayment(concurrentFirst.data.paymentId)).response.status, 200);
+  const concurrentSecond = await placePaidOrder(concurrentCookie, {
+    items: [{ menuItemId: 'chicken-wrap', quantity: 1 }],
+    collectionSlotId: concurrentSlots.data.slots[5].id,
+    idempotencyKey: randomUUID(),
+  });
+  assert.equal(concurrentSecond.response.status, 201);
+  const secondConcurrentSession = [...stripeSessions.values()].find((session) => session.metadata.paymentId === concurrentSecond.data.paymentId);
+  assert.equal(secondConcurrentSession.amount_total, 5000);
 
   const vendorCookie = await registerVendorAndLogin();
   assert.ok(vendorCookie);
@@ -415,7 +519,7 @@ test('first-order discount is server-owned, one-time, and account-specific', {
 
   const vendorSlots = await send(`/api/collection-slots?vendorId=${encodeURIComponent(vendorId)}`);
   assert.ok(vendorSlots.data.slots.length > 0);
-  const unavailableCheckout = await send('/api/student/orders', {
+  const unavailableCheckout = await send('/api/student/payments/checkout', {
     method: 'POST',
     cookie: secondCookie,
     payload: {
@@ -450,22 +554,68 @@ test('first-order discount is server-owned, one-time, and account-specific', {
   assert.equal(publicImage.status, 200);
   assert.deepEqual(Buffer.from(await publicImage.arrayBuffer()), replacementPng);
 
-  const vendorOrder = await send('/api/student/orders', {
+  const vendorCheckoutPayload = {
+    items: [{ menuItemId: testMenuItemId, quantity: 1 }],
+    collectionSlotId: vendorSlots.data.slots[0].id,
+    idempotencyKey: randomUUID(),
+  };
+  const vendorCheckout = await send('/api/student/payments/checkout', {
     method: 'POST',
     cookie: secondCookie,
-    payload: {
-      items: [{ menuItemId: testMenuItemId, quantity: 1 }],
-      collectionSlotId: vendorSlots.data.slots[0].id,
-      idempotencyKey: randomUUID(),
-    },
+    payload: vendorCheckoutPayload,
   });
-  assert.equal(vendorOrder.response.status, 201);
-  assert.equal(vendorOrder.data.order.subtotalCents, 3100);
-  assert.equal(vendorOrder.data.order.discountCents, 620);
+  assert.equal(vendorCheckout.response.status, 201);
+  const resumedCheckout = await send('/api/student/payments/checkout', {
+    method: 'POST',
+    cookie: secondCookie,
+    payload: { ...vendorCheckoutPayload, idempotencyKey: randomUUID() },
+  });
+  assert.equal(resumedCheckout.response.status, 200);
+  assert.equal(resumedCheckout.data.paymentId, vendorCheckout.data.paymentId);
+  assert.equal(resumedCheckout.data.checkoutUrl, vendorCheckout.data.checkoutUrl);
+  const pendingPayment = await send(`/api/student/payments/${vendorCheckout.data.paymentId}`, { cookie: secondCookie });
+  assert.equal(pendingPayment.data.paymentStatus, 'pending');
+  const otherStudentPayment = await send(`/api/student/payments/${vendorCheckout.data.paymentId}`, { cookie: firstCookie });
+  assert.equal(otherStudentPayment.response.status, 404);
+  assert.equal(pendingPayment.data.order.subtotalCents, 3100);
+  assert.equal(pendingPayment.data.order.discountCents, 620);
+
+  const hiddenUnpaidOrder = await send('/api/vendor/orders', { cookie: vendorCookie });
+  assert.deepEqual(hiddenUnpaidOrder.data.orders, []);
+  const unpaidTransition = await send(
+    `/api/vendor/orders/${encodeURIComponent(pendingPayment.data.order.id)}/status`,
+    { method: 'PATCH', cookie: vendorCookie, payload: { status: 'Confirmed' } },
+  );
+  assert.equal(unpaidTransition.response.status, 404);
+
+  const vendorSession = [...stripeSessions.values()].find((session) => session.metadata.paymentId === vendorCheckout.data.paymentId);
+  assert.equal((await sendStripeEvent('checkout.session.completed', vendorSession, { invalidSignature: true })).response.status, 400);
+  const mismatchedSession = { ...vendorSession, amount_total: vendorSession.amount_total + 100 };
+  assert.equal((await sendStripeEvent('checkout.session.completed', mismatchedSession)).response.status, 400);
+  const wrongCurrencySession = { ...vendorSession, currency: 'usd' };
+  assert.equal((await sendStripeEvent('checkout.session.completed', wrongCurrencySession)).response.status, 400);
+  vendorSession.status = 'complete';
+  vendorSession.payment_status = 'unpaid';
+  assert.equal((await sendStripeEvent('checkout.session.completed', vendorSession)).response.status, 200);
+  const stillPending = await send(`/api/student/payments/${vendorCheckout.data.paymentId}`, { cookie: secondCookie });
+  assert.equal(stillPending.data.paymentStatus, 'pending');
+  const completionEventId = `evt_${randomUUID().replaceAll('-', '')}`;
+  vendorSession.payment_status = 'paid';
+  vendorSession.payment_intent = `pi_test_${vendorSession.id}`;
+  assert.equal((await sendStripeEvent('checkout.session.async_payment_succeeded', vendorSession, { eventId: completionEventId })).response.status, 200);
+  assert.equal((await sendStripeEvent('checkout.session.async_payment_succeeded', vendorSession, { eventId: completionEventId })).response.status, 200);
+  const paidPayment = await send(`/api/student/payments/${vendorCheckout.data.paymentId}`, { cookie: secondCookie });
+  assert.equal(paidPayment.data.paymentStatus, 'paid');
+  const vendorOrder = { response: vendorCheckout.response, data: { ...vendorCheckout.data, order: paidPayment.data.order } };
 
   const vendorHistory = await send('/api/vendor/orders', { cookie: vendorCookie });
   assert.equal(vendorHistory.data.orders.length, 1);
   assert.equal(vendorHistory.data.orders[0].orderId, vendorOrder.data.order.orderId);
+
+  const unpaidCancellation = await send(`/api/vendor/orders/${encodeURIComponent(vendorOrder.data.order.id)}/status`, {
+    method: 'PATCH', cookie: vendorCookie, payload: { status: 'Cancelled' },
+  });
+  assert.equal(unpaidCancellation.response.status, 400);
 
   const statusUpdate = await send(`/api/vendor/orders/${encodeURIComponent(vendorOrder.data.order.id)}/status`, {
     method: 'PATCH',
@@ -480,6 +630,59 @@ test('first-order discount is server-owned, one-time, and account-specific', {
     trackedOrder.data.orders.find((order) => order.orderId === vendorOrder.data.order.orderId).status,
     'Confirmed',
   );
+  assert.equal(
+    trackedOrder.data.orders.find((order) => order.orderId === vendorOrder.data.order.orderId).paymentStatus,
+    'paid',
+  );
+
+  const expiringSlot = vendorSlots.data.slots[1];
+  const remainingBeforeExpiry = (await send(`/api/collection-slots?vendorId=${encodeURIComponent(vendorId)}`))
+    .data.slots.find((slot) => slot.id === expiringSlot.id).remaining;
+  const expiringCheckout = await send('/api/student/payments/checkout', {
+    method: 'POST',
+    cookie: secondCookie,
+    payload: {
+      items: [{ menuItemId: testMenuItemId, quantity: 1 }],
+      collectionSlotId: expiringSlot.id,
+      idempotencyKey: randomUUID(),
+    },
+  });
+  assert.equal(expiringCheckout.response.status, 201);
+  const expiringSession = [...stripeSessions.values()].find((session) => session.metadata.paymentId === expiringCheckout.data.paymentId);
+  expiringSession.status = 'expired';
+  const expiryEventId = `evt_${randomUUID().replaceAll('-', '')}`;
+  assert.equal((await sendStripeEvent('checkout.session.expired', expiringSession, { eventId: expiryEventId })).response.status, 200);
+  assert.equal((await sendStripeEvent('checkout.session.expired', expiringSession, { eventId: expiryEventId })).response.status, 200);
+  const expiredPayment = await send(`/api/student/payments/${expiringCheckout.data.paymentId}`, { cookie: secondCookie });
+  assert.equal(expiredPayment.data.paymentStatus, 'expired');
+  assert.equal(expiredPayment.data.order.status, 'Cancelled');
+  const remainingAfterExpiry = (await send(`/api/collection-slots?vendorId=${encodeURIComponent(vendorId)}`))
+    .data.slots.find((slot) => slot.id === expiringSlot.id).remaining;
+  assert.equal(remainingAfterExpiry, remainingBeforeExpiry);
+
+  const failingSlot = vendorSlots.data.slots[2];
+  const failingCheckout = await send('/api/student/payments/checkout', {
+    method: 'POST',
+    cookie: secondCookie,
+    payload: {
+      items: [{ menuItemId: testMenuItemId, quantity: 1 }],
+      collectionSlotId: failingSlot.id,
+      idempotencyKey: randomUUID(),
+    },
+  });
+  assert.equal(failingCheckout.response.status, 201);
+  const failingSession = [...stripeSessions.values()].find((session) => session.metadata.paymentId === failingCheckout.data.paymentId);
+  failingSession.status = 'complete';
+  const failingSlotRemaining = (await send(`/api/collection-slots?vendorId=${encodeURIComponent(vendorId)}`))
+    .data.slots.find((slot) => slot.id === failingSlot.id).remaining;
+  failingSession.payment_status = 'unpaid';
+  assert.equal((await sendStripeEvent('checkout.session.async_payment_failed', failingSession)).response.status, 200);
+  const failedPayment = await send(`/api/student/payments/${failingCheckout.data.paymentId}`, { cookie: secondCookie });
+  assert.equal(failedPayment.data.paymentStatus, 'failed');
+  assert.equal(failedPayment.data.order.status, 'Cancelled');
+  const failedSlotRemaining = (await send(`/api/collection-slots?vendorId=${encodeURIComponent(vendorId)}`))
+    .data.slots.find((slot) => slot.id === failingSlot.id).remaining;
+  assert.equal(failedSlotRemaining, failingSlotRemaining + 1);
 
   const removeMenuImage = await sendMultipart(`/api/vendor/menu/${encodeURIComponent(testMenuItemId)}`, {
     method: 'PATCH',

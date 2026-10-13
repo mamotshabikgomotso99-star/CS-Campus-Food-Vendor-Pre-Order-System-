@@ -139,17 +139,17 @@ The `server` application now has a persistent student-ordering vertical slice:
 - Registration persists users with scrypt-hashed passwords. Login creates an expiring, database-backed `HttpOnly` session cookie; protected APIs enforce student/vendor roles.
 - The API seeds the prototype vendor/menu catalog and rolling collection slots, and returns only available menu items for checkout.
 - Vendors can list, add, edit, and remove their own menu items through authenticated API routes. Items already referenced by orders are retired by setting them unavailable, preserving order history.
-- Student checkout persists order/item snapshots, validates availability and collection slots, computes the service fee and totals server-side, and gives 20% off the food subtotal on the first successfully created order only.
+- Student checkout persists order/item snapshots, validates availability and collection slots, computes the service fee and totals server-side, and gives 20% off the food subtotal on the first successfully paid order only.
 - Vendor order lists and allowed status transitions are persisted; student and vendor order views refresh from the API.
 - `npm --prefix server test` runs a database-backed integration test for first-order eligibility, retries, concurrent submissions, and account isolation.
-- Email verification, password recovery, payments, notifications, and administrator APIs are not integrated.
+- Email verification, password recovery, notifications, and administrator APIs are not integrated. Stripe-hosted Checkout is implemented in test mode; production payment processing is not enabled.
 
 ### Current prototype limitations
 
 - The API requires a PostgreSQL `DATABASE_URL`; local setup is documented in `README.md`.
 - Student/vendor page navigation is not itself protected; data-changing and order APIs enforce the server session and role.
 - Vendor discovery, most dashboard metrics, profile editing, email verification, and password recovery remain prototype-only or unconfigured.
-- Payment, refund, notification, audit, and administrator workflows are not implemented.
+- Production payment processing, refunds, notification, audit, and administrator workflows are not implemented.
 - Automated browser, accessibility, and performance test suites are not present.
 
 The prototype is accepted as a design and interaction baseline, not as a production-ready ordering system.
@@ -192,9 +192,13 @@ PostgreSQL is selected for the current backend slice and uses versioned SQL migr
 The implementation must explicitly choose and document services for:
 
 - Email verification and password recovery.
-- Payment processing, if required by the institution.
+- Payment processing, if required by the institution. Stripe-hosted Checkout in test mode is selected for the current prototype; live mode requires separate operational approval.
 - Transactional notifications.
 - Hosting and monitoring.
+
+Stripe test checkout uses server-only `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` values. The API creates hosted Checkout Sessions in ZAR and marks orders paid only after verifying Stripe's signed webhook. Unpaid orders are not visible or fulfilable by vendors. Local webhook forwarding uses the Stripe CLI; production payments remain disabled pending live-key approval, production webhook setup, and refund/cancellation policy.
+
+Until refunds and an approved cancellation policy are implemented, vendors cannot cancel successfully paid orders. This prevents a paid order from being cancelled without returning funds.
 
 ---
 
@@ -691,6 +695,7 @@ No change is considered part of the contract until it is approved and added to t
 | Date | Change | Owner | Status |
 |---|---|---|---|
 | 2026-09-17 | Initial project contract created from the existing repository and prototype state. | Project team | Approved for planning |
+| 2026-10-13 | Selected Stripe-hosted Checkout in test mode; require signed webhook confirmation before vendor fulfilment. | Project team | Approved for prototype |
 
 ---
 

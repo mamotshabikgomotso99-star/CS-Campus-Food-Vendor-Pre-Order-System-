@@ -18,8 +18,8 @@ function formatCollection(collectionAt: string) {
 }
 
 const nextStatuses: Record<ApiOrder["status"], ApiOrder["status"][]> = {
-  Pending: ["Confirmed", "Cancelled"],
-  Confirmed: ["Preparing", "Cancelled"],
+  Pending: ["Confirmed"],
+  Confirmed: ["Preparing"],
   Preparing: ["Ready for Collection"],
   "Ready for Collection": ["Collected"],
   Collected: [],
