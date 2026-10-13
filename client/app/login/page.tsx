@@ -11,8 +11,8 @@ export default function LoginPage() {
 
   useEffect(() => {
     const identity = readAuthIdentity();
-    if (identity?.role === "vendor" || identity?.role === "student") {
-      router.replace(`/${identity.role}/dashboard`);
+    if (identity) {
+      router.replace(identity.role === "admin" ? "/admin/dashboard" : `/${identity.role}/dashboard`);
     }
   }, [router]);
 

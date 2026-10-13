@@ -19,6 +19,7 @@ type FormState = {
   password: string;
   confirmPassword: string;
   studentNumber: string;
+  staffNumber: string;
   termsAccepted: boolean;
 };
 
@@ -30,6 +31,7 @@ export function RegisterForm() {
     password: "",
     confirmPassword: "",
     studentNumber: "",
+    staffNumber: "",
     termsAccepted: false,
   });
   const [errors, setErrors] = useState<Partial<Record<keyof FormState | "general", string>>>({});
@@ -50,6 +52,9 @@ export function RegisterForm() {
     if (fullNameError) nextErrors.fullName = fullNameError;
     if (emailError) nextErrors.email = emailError;
     if (passwordError) nextErrors.password = passwordError;
+    if (!form.studentNumber.trim() && !form.staffNumber.trim()) {
+      nextErrors.studentNumber = "Enter a student or staff number to create an account.";
+    }
     if (form.password !== form.confirmPassword) {
       nextErrors.confirmPassword = "Passwords do not match.";
     }
@@ -79,6 +84,7 @@ export function RegisterForm() {
         confirmPassword: form.confirmPassword,
         role: "student",
         studentNumber: form.studentNumber.trim() || undefined,
+        staffNumber: form.staffNumber.trim() || undefined,
       });
 
       router.push("/verify-email");
@@ -126,7 +132,7 @@ export function RegisterForm() {
         />
 
         <AuthInput
-          label="Student number (optional)"
+          label="Student number"
           type="text"
           name="studentNumber"
           placeholder="Enter your student number"
@@ -134,6 +140,19 @@ export function RegisterForm() {
           error={errors.studentNumber}
           onChange={(event) => updateField("studentNumber", event.target.value)}
         />
+
+        <AuthInput
+          label="Staff number"
+          type="text"
+          name="staffNumber"
+          placeholder="Enter your staff number"
+          value={form.staffNumber}
+          error={errors.staffNumber}
+          onChange={(event) => updateField("staffNumber", event.target.value)}
+        />
+        <p className="-mt-3 text-xs text-slate-500">
+          A student or staff number is required to create a student account.
+        </p>
 
         <PasswordInput
           label="Password"
@@ -196,6 +215,12 @@ export function RegisterForm() {
           Already have an account? {" "}
           <Link href="/login" className="font-semibold text-violet-700 hover:text-violet-800">
             Log in
+          </Link>
+        </p>
+        <p className="text-center text-sm text-slate-600">
+          Applying as a campus vendor?{" "}
+          <Link href="/vendor/apply" className="font-semibold text-violet-700 hover:text-violet-800">
+            Request vendor access
           </Link>
         </p>
       </form>

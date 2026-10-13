@@ -1,4 +1,4 @@
-export type AuthRole = "student" | "vendor";
+export type AuthRole = "student" | "vendor" | "admin";
 
 export type LoginPayload = {
   email: string;
@@ -11,8 +11,9 @@ export type RegisterPayload = {
   email: string;
   password: string;
   confirmPassword: string;
-  role: AuthRole;
+  role: "student";
   studentNumber?: string;
+  staffNumber?: string;
   vendorName?: string;
 };
 
@@ -30,6 +31,19 @@ export type AuthSuccessResponse = {
 export type AuthErrorResponse = {
   success: false;
   message: string;
+};
+
+export type VendorRequest = {
+  id: string;
+  fullName: string;
+  email: string;
+  vendorName: string;
+  category: string;
+  collectionLocation: string | null;
+  openingTime: string | null;
+  closingTime: string | null;
+  preparationTimeMinutes: number | null;
+  createdAt: string;
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -168,6 +182,32 @@ export async function loginUser(payload: LoginPayload): Promise<AuthSuccessRespo
 
 export async function registerUser(payload: RegisterPayload): Promise<AuthSuccessResponse> {
   return request<AuthSuccessResponse>("/api/auth/register", { payload });
+}
+
+export async function submitVendorRequest(payload: {
+  fullName: string;
+  email: string;
+  password: string;
+  confirmPassword: string;
+  vendorName: string;
+  category: string;
+  collectionLocation: string;
+  openingTime: string;
+  closingTime: string;
+  preparationTimeMinutes: number;
+}): Promise<AuthSuccessResponse> {
+  return request<AuthSuccessResponse>("/api/vendor-requests", { payload });
+}
+
+export async function getVendorRequests() {
+  return request<{ success: true; requests: VendorRequest[] }>("/api/admin/vendor-requests");
+}
+
+export async function reviewVendorRequest(requestId: string, status: "approved" | "rejected") {
+  return request<{ success: true; message: string; status: "approved" | "rejected" }>(
+    `/api/admin/vendor-requests/${encodeURIComponent(requestId)}`,
+    { method: "PATCH", payload: { status } },
+  );
 }
 
 export async function requestPasswordReset(email: string): Promise<AuthSuccessResponse> {

@@ -4,13 +4,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
-import { loginUser } from "@/lib/api";
+import { loginUser, logoutUser } from "@/lib/api";
 import { saveAuthIdentity } from "@/lib/auth-session";
 import { validateEmail, validatePassword } from "@/lib/validations";
 import { AuthInput } from "@/components/auth/AuthInput";
 import { PasswordInput } from "@/components/auth/PasswordInput";
 
-export function LoginForm() {
+export function LoginForm({ mode = "standard" }: { mode?: "standard" | "admin" }) {
   const router = useRouter();
   const [form, setForm] = useState({ email: "", password: "", remember: true });
   const [errors, setErrors] = useState<{ email?: string; password?: string; general?: string }>({});
@@ -51,8 +51,14 @@ export function LoginForm() {
       });
 
       const accountRole = response.role ?? response.user?.role;
-      if (accountRole !== "student" && accountRole !== "vendor") {
-        throw new Error("Unable to determine the account type for this login.");
+      const allowedRole = mode === "admin" ? accountRole === "admin" : accountRole === "student" || accountRole === "vendor";
+      if (!allowedRole || !accountRole) {
+        await logoutUser().catch(() => {});
+        throw new Error(mode === "admin"
+          ? "This sign-in is for admin accounts only."
+          : accountRole === "admin"
+            ? "Use the admin sign-in page to continue."
+            : "Unable to determine the account type for this login.");
       }
 
       saveAuthIdentity({
@@ -73,13 +79,13 @@ export function LoginForm() {
     <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_12px_40px_rgba(15,23,42,0.06)] sm:p-7">
       <div className="mb-6">
         <p className="text-sm font-medium uppercase tracking-[0.2em] text-violet-600">
-          Sign in
+          {mode === "admin" ? "Admin access" : "Sign in"}
         </p>
         <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-900">
-          Welcome back!
+          {mode === "admin" ? "Administrator sign in" : "Welcome back!"}
         </h2>
         <p className="mt-2 text-sm text-slate-600">
-          Sign in to your Campus Eats account.
+          {mode === "admin" ? "Review vendor applications securely." : "Sign in to your Campus Eats account."}
         </p>
       </div>
 
@@ -142,12 +148,29 @@ export function LoginForm() {
           )}
         </button>
 
-        <p className="text-center text-sm text-slate-600">
-          Don&apos;t have an account? {" "}
-          <Link href="/register" className="font-semibold text-violet-700 hover:text-violet-800">
-            Sign up
-          </Link>
-        </p>
+        {mode === "standard" ? (
+          <p className="text-center text-sm text-slate-600">
+            Don&apos;t have an account?{" "}
+            <Link href="/register" className="font-semibold text-violet-700 hover:text-violet-800">
+              Sign up
+            </Link>
+          </p>
+        ) : (
+          <p className="text-center text-sm text-slate-600">
+            Campus Eats member?{" "}
+            <Link href="/login" className="font-semibold text-violet-700 hover:text-violet-800">
+              Member sign in
+            </Link>
+          </p>
+        )}
+        {mode === "standard" ? (
+          <p className="text-center text-xs text-slate-500">
+            Campus Eats administrator?{" "}
+            <Link href="/admin/login" className="font-semibold text-violet-700 hover:text-violet-800">
+              Admin sign in
+            </Link>
+          </p>
+        ) : null}
       </form>
     </div>
   );

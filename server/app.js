@@ -69,6 +69,11 @@ function hashToken(token) {
   return createHash('sha256').update(token).digest('hex');
 }
 
+async function hasVendorProfile(pool, userId) {
+  const result = await pool.query('SELECT id FROM vendors WHERE owner_user_id = $1', [userId]);
+  return Boolean(result.rows[0]);
+}
+
 async function hashPassword(password) {
   const salt = randomBytes(16);
   const derivedKey = await scryptAsync(password, salt, 64);
@@ -420,6 +425,10 @@ function createApp(pool, dependencies = {}) {
         response.status(403).json({ success: false, message: 'You do not have permission to access this resource.' });
         return;
       }
+      if (user.role === 'vendor' && !(await hasVendorProfile(pool, user.id))) {
+        response.status(403).json({ success: false, message: 'Your vendor account is awaiting admin approval.' });
+        return;
+      }
 
       request.user = user;
       next();
@@ -427,6 +436,145 @@ function createApp(pool, dependencies = {}) {
       response.status(500).json({ success: false, message: 'Unable to verify your session right now.' });
     }
   };
+
+  app.post('/api/vendor-requests', async (request, response) => {
+    const fullName = typeof request.body.fullName === 'string' ? request.body.fullName.trim() : '';
+    const email = typeof request.body.email === 'string' ? request.body.email.trim().toLowerCase() : '';
+    const password = typeof request.body.password === 'string' ? request.body.password : '';
+    const vendorName = typeof request.body.vendorName === 'string' ? request.body.vendorName.trim() : '';
+    const category = typeof request.body.category === 'string' ? request.body.category.trim() : '';
+    const collectionLocation = typeof request.body.collectionLocation === 'string' ? request.body.collectionLocation.trim() : '';
+    const openingTime = typeof request.body.openingTime === 'string' ? request.body.openingTime : '';
+    const closingTime = typeof request.body.closingTime === 'string' ? request.body.closingTime : '';
+    const preparationTimeMinutes = Number(request.body.preparationTimeMinutes);
+    const isValidTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+
+    if (
+      !fullName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 8 ||
+      (request.body.confirmPassword && request.body.confirmPassword !== password) ||
+      !vendorName || !category || vendorName.length > 120 || category.length > 80 ||
+      !collectionLocation || collectionLocation.length > 200 ||
+      !isValidTime(openingTime) || !isValidTime(closingTime) || openingTime >= closingTime ||
+      !Number.isInteger(preparationTimeMinutes) || preparationTimeMinutes < 1 || preparationTimeMinutes > 180
+    ) {
+      response.status(400).json({ success: false, message: 'Provide valid contact, business, and password details.' });
+      return;
+    }
+
+    try {
+      const existingAccount = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+      if (existingAccount.rows[0]) {
+        response.status(409).json({ success: false, message: 'An account with this email already exists.' });
+        return;
+      }
+
+      const passwordHash = await hashPassword(password);
+      await pool.query(
+        `INSERT INTO vendor_requests
+          (id, full_name, email, password_hash, vendor_name, category, collection_location,
+           opening_time, closing_time, preparation_time_minutes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [randomUUID(), fullName, email, passwordHash, vendorName, category, collectionLocation,
+          openingTime, closingTime, preparationTimeMinutes],
+      );
+      response.status(201).json({ success: true, message: 'Vendor request submitted for admin review.' });
+    } catch (error) {
+      if (error.code === '23505') {
+        response.status(409).json({ success: false, message: 'A vendor request for this email is already pending.' });
+        return;
+      }
+      response.status(500).json({ success: false, message: 'Unable to submit your vendor request right now.' });
+    }
+  });
+
+  app.get('/api/admin/vendor-requests', requireRole('admin'), async (request, response) => {
+    try {
+      const result = await pool.query(
+        `SELECT id, full_name AS "fullName", email, vendor_name AS "vendorName",
+          category, collection_location AS "collectionLocation",
+          opening_time AS "openingTime", closing_time AS "closingTime",
+          preparation_time_minutes AS "preparationTimeMinutes", created_at AS "createdAt"
+           FROM vendor_requests WHERE status = 'pending' ORDER BY created_at ASC`,
+      );
+      response.json({ success: true, requests: result.rows });
+    } catch {
+      response.status(500).json({ success: false, message: 'Unable to load vendor requests right now.' });
+    }
+  });
+
+  app.patch('/api/admin/vendor-requests/:requestId', requireRole('admin'), async (request, response) => {
+    const decision = request.body.status;
+    if (decision !== 'approved' && decision !== 'rejected') {
+      response.status(400).json({ success: false, message: 'Choose approve or reject for this request.' });
+      return;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const requestResult = await client.query(
+        `SELECT id, full_name, email, password_hash, vendor_name, category,
+          collection_location, opening_time, closing_time, preparation_time_minutes
+           FROM vendor_requests WHERE id = $1 AND status = 'pending' FOR UPDATE`,
+        [request.params.requestId],
+      );
+      const vendorRequest = requestResult.rows[0];
+      if (!vendorRequest) {
+        await client.query('ROLLBACK');
+        response.status(404).json({ success: false, message: 'This pending vendor request was not found.' });
+        return;
+      }
+      if (
+        decision === 'approved' &&
+        (!vendorRequest.collection_location || !vendorRequest.opening_time || !vendorRequest.closing_time ||
+          !Number.isInteger(vendorRequest.preparation_time_minutes))
+      ) {
+        await client.query('ROLLBACK');
+        response.status(409).json({
+          success: false,
+          message: 'This older request is missing operating details. Ask the vendor to submit a new application.',
+        });
+        return;
+      }
+
+      let vendorId = null;
+      if (decision === 'approved') {
+        const userId = randomUUID();
+        vendorId = randomUUID();
+        await client.query(
+          `INSERT INTO users (id, full_name, email, password_hash, role)
+           VALUES ($1, $2, $3, $4, 'vendor')`,
+          [userId, vendorRequest.full_name, vendorRequest.email, vendorRequest.password_hash],
+        );
+        await client.query(
+          `INSERT INTO vendors
+            (id, name, category, owner_user_id, collection_location, opening_time, closing_time, preparation_time_minutes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [vendorId, vendorRequest.vendor_name, vendorRequest.category, userId,
+            vendorRequest.collection_location, vendorRequest.opening_time,
+            vendorRequest.closing_time, vendorRequest.preparation_time_minutes],
+        );
+      }
+
+      await client.query(
+        `UPDATE vendor_requests
+            SET status = $1, vendor_id = $2, reviewed_by = $3, reviewed_at = NOW(), password_hash = ''
+          WHERE id = $4`,
+        [decision, vendorId, request.user.id, vendorRequest.id],
+      );
+      await client.query('COMMIT');
+      response.json({ success: true, message: `Vendor request ${decision}.`, status: decision });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      if (error.code === '23505') {
+        response.status(409).json({ success: false, message: 'The vendor email or business name is already in use.' });
+        return;
+      }
+      response.status(500).json({ success: false, message: 'Unable to review this vendor request right now.' });
+    } finally {
+      client.release();
+    }
+  });
 
   const parseMenuImage = (request, response, next) => {
     menuImageUpload.single('image')(request, response, (error) => {
@@ -452,19 +600,22 @@ function createApp(pool, dependencies = {}) {
     const fullName = typeof request.body.fullName === 'string' ? request.body.fullName.trim() : '';
     const email = typeof request.body.email === 'string' ? request.body.email.trim().toLowerCase() : '';
     const password = typeof request.body.password === 'string' ? request.body.password : '';
-    const role = request.body.role;
+    const role = typeof request.body.role === 'string' ? request.body.role : '';
     const studentNumber = typeof request.body.studentNumber === 'string'
       ? request.body.studentNumber.trim() || null
       : null;
+    const staffNumber = typeof request.body.staffNumber === 'string'
+      ? request.body.staffNumber.trim() || null
+      : null;
+    const hasAcademicNumber = Boolean(studentNumber || staffNumber);
 
-    if (role === 'vendor') {
-      response.status(403).json({ success: false, message: 'Vendor accounts must be provisioned by an administrator.' });
+    if (role && role !== 'student') {
+      response.status(400).json({ success: false, message: 'Please provide valid account details.' });
       return;
     }
 
     if (
-      !fullName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 8 ||
-      role !== 'student' ||
+      !fullName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 8 || !hasAcademicNumber ||
       (request.body.confirmPassword && request.body.confirmPassword !== password)
     ) {
       response.status(400).json({ success: false, message: 'Please provide valid account details.' });
@@ -479,11 +630,11 @@ function createApp(pool, dependencies = {}) {
       await client.query(
         `INSERT INTO users (id, full_name, email, password_hash, role, student_number)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [userId, fullName, email, passwordHash, role, studentNumber],
+        [userId, fullName, email, passwordHash, 'student', studentNumber || staffNumber],
       );
 
       await client.query('COMMIT');
-      response.status(201).json({ success: true, message: 'Account created. Please sign in to continue.', role });
+      response.status(201).json({ success: true, message: 'Account created. Please sign in to continue.', role: 'student' });
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       if (error.code === '23505') {
@@ -507,6 +658,10 @@ function createApp(pool, dependencies = {}) {
       const user = result.rows[0];
       if (!user || !(await verifyPassword(password, user.password_hash))) {
         response.status(401).json({ success: false, message: 'Invalid email or password.' });
+        return;
+      }
+      if (user.role === 'vendor' && !(await hasVendorProfile(pool, user.id))) {
+        response.status(403).json({ success: false, message: 'Your vendor account is awaiting admin approval.' });
         return;
       }
 

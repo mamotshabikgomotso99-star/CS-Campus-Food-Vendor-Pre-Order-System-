@@ -16,6 +16,10 @@ npm --prefix client run dev -- --hostname 127.0.0.1
 
 Open `http://127.0.0.1:3000`. The API applies versioned SQL migrations from `server/migrations/` at startup and seeds the prototype menu and collection slots.
 
+## Admin access and vendor applications
+
+Vendor applicants use `/vendor/apply`; their account is not created until an admin approves the request. Create the first admin by adding `ADMIN_EMAIL`, `ADMIN_NAME`, and a unique `ADMIN_PASSWORD` of at least 12 characters to the private `server/.env`, then run `npm --prefix server run create-admin`. Remove those bootstrap values after creation. Admins sign in at `/admin/login` and review pending requests at `/admin/dashboard`. Admin registration is not public.
+
 ## Deploy the API on Render
 
 The frontend can remain on Vercel while the Express API runs as a separate Render web service. The root `render.yaml` defines the API service and prompts for `DATABASE_URL` and `CLIENT_URL` without storing their values in Git.

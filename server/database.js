@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Pool } = require('pg');
 
-const MIGRATIONS = ['001_initial_schema.sql', '002_menu_item_images.sql', '003_stripe_payments.sql'];
+const MIGRATIONS = ['001_initial_schema.sql', '002_menu_item_images.sql', '003_stripe_payments.sql', '004_vendor_approval.sql', '005_vendor_operating_details.sql'];
 
 const seedVendors = [
   { id: 'fresh-bites', name: 'Fresh Bites', category: 'Fast Food' },
