@@ -5,14 +5,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
+import { VendorCoverImage } from "@/components/menu/VendorCoverImage";
 import { getMenuItems, resolveApiUrl, type MenuApiItem } from "@/lib/api";
-
-const vendorFallbackImages: Record<string, string> = {
-  "fresh-bites": "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=900&q=80",
-  "mamas-corner": "https://images.unsplash.com/photo-1547592180-85f173990554?auto=format&fit=crop&w=900&q=80",
-  "student-cafe": "https://images.unsplash.com/photo-1517701604599-bb29b565090c?auto=format&fit=crop&w=900&q=80",
-  "sunset-snacks": "https://images.unsplash.com/photo-1553530666-ba11a7da3888?auto=format&fit=crop&w=900&q=80",
-};
 
 type VendorSummary = {
   id: string;
@@ -51,10 +45,7 @@ function buildVendorSummaries(items: MenuApiItem[]): VendorSummary[] {
     });
   }
 
-  return Array.from(map.values(), (vendor) => ({
-    ...vendor,
-    imageUrl: vendor.imageUrl ?? vendorFallbackImages[vendor.id] ?? null,
-  }));
+  return Array.from(map.values());
 }
 
 export default function StudentVendorsPage() {
@@ -138,19 +129,13 @@ export default function StudentVendorsPage() {
         <section className="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           {filteredVendors.map((vendor) => (
             <div key={vendor.id} className="rounded-[28px] border border-violet-100 bg-white p-4 shadow-sm">
-              <div className={`mb-4 h-48 overflow-hidden rounded-[22px] bg-gradient-to-br ${vendor.accent}`}>
-                {vendor.imageUrl ? (
-                  <img
-                    src={vendor.imageUrl}
-                    alt={`${vendor.name} featured food`}
-                    className="h-full w-full object-cover transition-transform duration-300 hover:scale-105"
-                  />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center text-lg font-semibold text-violet-700">
-                    {vendor.name}
-                  </div>
-                )}
-              </div>
+              <VendorCoverImage
+                key={`${vendor.id}:${vendor.imageUrl ?? ""}`}
+                vendorId={vendor.id}
+                vendorName={vendor.name}
+                imageUrl={vendor.imageUrl}
+                className={`mb-4 h-48 rounded-[22px] bg-gradient-to-br ${vendor.accent} transition-transform duration-300 hover:scale-[1.02]`}
+              />
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h3 className="text-xl font-semibold text-slate-900">{vendor.name}</h3>

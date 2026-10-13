@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { RequireAuth } from "@/components/auth/RequireAuth";
+import { VendorCoverImage } from "@/components/menu/VendorCoverImage";
 import { StudentDashboardGreeting } from "@/components/auth/AuthIdentityProvider";
 import { StudentOrderOverview } from "@/components/orders/StudentOrderOverview";
 import { getMenuItems, resolveApiUrl, type MenuApiItem } from "@/lib/api";
@@ -129,15 +130,12 @@ export default function StudentDashboardPage() {
             <div className="grid gap-4 md:grid-cols-2">
               {vendors.map((vendor) => (
                 <div key={vendor.id} className="rounded-[24px] border border-slate-200 bg-slate-50 p-3">
-                  <div className={`mb-3 h-40 overflow-hidden rounded-[20px] bg-gradient-to-br ${vendor.accent}`}>
-                    {vendor.imageUrl ? (
-                      <img src={vendor.imageUrl} alt={`${vendor.name} featured menu item`} className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-lg font-semibold text-violet-700">
-                        {vendor.name}
-                      </div>
-                    )}
-                  </div>
+                  <VendorCoverImage
+                    vendorId={vendor.id}
+                    vendorName={vendor.name}
+                    imageUrl={vendor.imageUrl}
+                    className={`mb-3 h-40 rounded-[20px] bg-gradient-to-br ${vendor.accent}`}
+                  />
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-lg font-semibold text-slate-900">{vendor.name}</p>
