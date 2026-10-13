@@ -7,6 +7,13 @@ import { RequireAuth } from "@/components/auth/RequireAuth";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { getMenuItems, resolveApiUrl, type MenuApiItem } from "@/lib/api";
 
+const vendorFallbackImages: Record<string, string> = {
+  "fresh-bites": "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=900&q=80",
+  "mamas-corner": "https://images.unsplash.com/photo-1547592180-85f173990554?auto=format&fit=crop&w=900&q=80",
+  "student-cafe": "https://images.unsplash.com/photo-1517701604599-bb29b565090c?auto=format&fit=crop&w=900&q=80",
+  "sunset-snacks": "https://images.unsplash.com/photo-1553530666-ba11a7da3888?auto=format&fit=crop&w=900&q=80",
+};
+
 type VendorSummary = {
   id: string;
   name: string;
@@ -44,7 +51,10 @@ function buildVendorSummaries(items: MenuApiItem[]): VendorSummary[] {
     });
   }
 
-  return Array.from(map.values());
+  return Array.from(map.values(), (vendor) => ({
+    ...vendor,
+    imageUrl: vendor.imageUrl ?? vendorFallbackImages[vendor.id] ?? null,
+  }));
 }
 
 export default function StudentVendorsPage() {
