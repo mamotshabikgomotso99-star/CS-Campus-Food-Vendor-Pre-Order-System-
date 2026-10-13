@@ -29,7 +29,8 @@ The prototype has a working Express API and live data hooks, but some student-fa
   - `items[]` with `menuItemId` and `quantity`
   - `collectionSlotId`
   - `idempotencyKey`
-- Validate card details locally before submit, but keep the actual pricing, availability, discount eligibility, and totals server-authoritative.
+- Do not collect card details or imply an online charge; payment processing is not integrated, so tell students to pay at collection.
+- Keep pricing, availability, discount eligibility, and final totals server-authoritative.
 - Handle success states, duplicate request protection, and rejection messages cleanly.
 
 ### 4) Student order tracking

@@ -21,15 +21,20 @@ export function Sidebar({ role }: { role: "student" | "vendor" }) {
   const router = useRouter();
   const identity = useAuthIdentity();
   const displayName = getIdentityName(identity);
+  const dashboardPath = `/${role}/dashboard`;
   const links = [
-    { href: "/dashboard", label: "Dashboard", icon: LayoutGrid },
+    { href: dashboardPath, label: "Dashboard", icon: LayoutGrid },
     {
-      href: "/dashboard",
+      href: role === "student" ? "/student/vendors" : "/vendor/menu",
       label: role === "student" ? "Vendors" : "Menu",
       icon: role === "student" ? Store : UtensilsCrossed,
     },
-    { href: "/dashboard", label: "Orders", icon: role === "student" ? ClipboardList : ClipboardCheck },
-    { href: "/dashboard", label: "Profile", icon: UserCircle },
+    {
+      href: role === "student" ? "/student/orders" : "/vendor/orders",
+      label: "Orders",
+      icon: role === "student" ? ClipboardList : ClipboardCheck,
+    },
+    { href: `/${role}/profile`, label: "Profile", icon: UserCircle },
   ];
 
   const handleLogout = async () => {

@@ -21,16 +21,6 @@ export function RequireAuth({
     const verifySession = async () => {
       const localIdentity = readAuthIdentity();
 
-      if (!localIdentity) {
-        router.replace("/login");
-        return;
-      }
-
-      if (role && localIdentity.role !== role) {
-        router.replace("/dashboard");
-        return;
-      }
-
       try {
         const response = await getCurrentUser();
         const accountRole = response.user?.role;
@@ -41,18 +31,25 @@ export function RequireAuth({
         }
 
         if (role && accountRole !== role) {
-          router.replace("/dashboard");
+          saveAuthIdentity({
+            fullName: user.fullName ?? localIdentity?.fullName ?? user.email.split("@")[0],
+            email: user.email,
+            role: accountRole,
+          });
+          router.replace(`/${accountRole}/dashboard`);
           return;
         }
 
         saveAuthIdentity({
-          fullName: user.fullName ?? localIdentity.fullName,
+          fullName: user.fullName ?? localIdentity?.fullName ?? user.email.split("@")[0],
           email: user.email,
           role: accountRole,
         });
       } catch {
-        clearAuthIdentity();
-        router.replace("/login");
+        if (isActive) {
+          clearAuthIdentity();
+          router.replace("/login");
+        }
         return;
       }
 
