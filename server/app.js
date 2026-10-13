@@ -97,24 +97,34 @@ function readCookie(request, name) {
   return '';
 }
 
+function getCookieOptions() {
+  const clientUrl = process.env.CLIENT_URL ?? '';
+  const isCrossSiteClient = Boolean(clientUrl) && /^https?:\/\//i.test(clientUrl) && !/localhost|127\.0\.0\.1/i.test(clientUrl);
+  const sameSite = isCrossSiteClient ? 'None' : 'Lax';
+  const secure = sameSite === 'None' || process.env.NODE_ENV === 'production';
+  return { sameSite, secure };
+}
+
 function setSessionCookie(response, token, maxAgeSeconds) {
+  const { sameSite, secure } = getCookieOptions();
   const cookieParts = [
     `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
     'HttpOnly',
-    'SameSite=Lax',
+    `SameSite=${sameSite}`,
     'Path=/',
     `Max-Age=${maxAgeSeconds}`,
   ];
-  if (process.env.NODE_ENV === 'production') {
+  if (secure) {
     cookieParts.push('Secure');
   }
   response.setHeader('Set-Cookie', cookieParts.join('; '));
 }
 
 function clearSessionCookie(response) {
+  const { sameSite, secure } = getCookieOptions();
   response.setHeader(
     'Set-Cookie',
-    `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`,
+    `${SESSION_COOKIE}=; HttpOnly; SameSite=${sameSite}; Path=/; Max-Age=0${secure ? '; Secure' : ''}`,
   );
 }
 
@@ -123,10 +133,30 @@ function getAllowedOrigins() {
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
+  const vercelHosts = ['.vercel.app', '.vercel-preview.com'];
   const localOrigins = process.env.NODE_ENV === 'production'
     ? []
     : ['http://localhost:3000', 'http://127.0.0.1:3000'];
-  return new Set([...configured, ...localOrigins]);
+  const origins = new Set([...configured, ...localOrigins]);
+
+  if (process.env.VERCEL_URL) {
+    origins.add(`https://${process.env.VERCEL_URL}`);
+  }
+
+  return {
+    origins,
+    allowsVercelPreview(origin) {
+      if (!origin) {
+        return false;
+      }
+      try {
+        const hostname = new URL(origin).hostname;
+        return vercelHosts.some((host) => hostname.endsWith(host));
+      } catch {
+        return false;
+      }
+    },
+  };
 }
 
 function orderSummary(items) {
@@ -183,17 +213,26 @@ async function loadOrder(pool, orderId) {
 
 function createApp(pool) {
   const app = express();
-  const allowedOrigins = getAllowedOrigins();
+  const { origins: allowedOrigins, allowsVercelPreview } = getAllowedOrigins();
 
   app.use(cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.has(origin)) {
+      if (!origin) {
         callback(null, true);
         return;
       }
+
+      const normalizedOrigin = origin.replace(/\/$/, '');
+      if (allowedOrigins.has(normalizedOrigin) || allowsVercelPreview(normalizedOrigin)) {
+        callback(null, true);
+        return;
+      }
+
       callback(new Error('Origin is not allowed.'));
     },
     credentials: true,
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   }));
   app.use(express.json({ limit: '32kb' }));
 
