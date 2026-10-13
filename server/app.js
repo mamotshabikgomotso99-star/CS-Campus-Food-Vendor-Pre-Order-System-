@@ -4,6 +4,7 @@ const cors = require('cors');
 const express = require('express');
 const multer = require('multer');
 const { ensureCollectionSlots } = require('./database');
+const { buildCheckoutReturnUrls, createStripeClient, getClientOrigin } = require('./payments');
 
 const scryptAsync = promisify(scrypt);
 const SESSION_COOKIE = 'campus_eats_session';
@@ -25,8 +26,8 @@ const menuImageUpload = multer({
   },
 });
 const allowedTransitions = {
-  Pending: ['Confirmed', 'Cancelled'],
-  Confirmed: ['Preparing', 'Cancelled'],
+  Pending: ['Confirmed'],
+  Confirmed: ['Preparing'],
   Preparing: ['Ready for Collection'],
   'Ready for Collection': ['Collected'],
   Collected: [],
@@ -168,11 +169,13 @@ async function loadOrder(pool, orderId) {
     `SELECT o.id, o.order_number, o.vendor_id, v.name AS vendor_name,
             o.student_id, u.full_name AS student_name,
             o.subtotal_cents, o.discount_cents, o.service_fee_cents, o.total_cents,
-            o.status, o.created_at, s.starts_at AS collection_at
+              o.status, o.created_at, s.starts_at AS collection_at,
+              p.id AS payment_id, p.status AS payment_status
        FROM orders o
        JOIN vendors v ON v.id = o.vendor_id
        JOIN users u ON u.id = o.student_id
        JOIN collection_slots s ON s.id = o.collection_slot_id
+            LEFT JOIN order_payments p ON p.order_id = o.id
       WHERE o.id = $1`,
     [orderId],
   );
@@ -206,13 +209,122 @@ async function loadOrder(pool, orderId) {
     serviceFeeCents: row.service_fee_cents,
     totalCents: row.total_cents,
     status: row.status,
+    paymentId: row.payment_id ?? null,
+    paymentStatus: row.payment_status ?? 'unverified',
     collectionAt: new Date(row.collection_at).toISOString(),
     createdAt: new Date(row.created_at).toISOString(),
   };
 }
 
-function createApp(pool) {
+async function processStripeWebhookEvent(pool, event) {
+  const supportedEvents = new Set([
+    'checkout.session.completed',
+    'checkout.session.async_payment_succeeded',
+    'checkout.session.async_payment_failed',
+    'checkout.session.expired',
+  ]);
+  if (!supportedEvents.has(event.type)) {
+    return;
+  }
+
+  const session = event.data?.object;
+  const paymentId = session?.metadata?.paymentId;
+  const orderId = session?.metadata?.orderId;
+  if (!session?.id || !paymentId || !orderId || !Number.isSafeInteger(session.amount_total)) {
+    throw new Error('Invalid Stripe Checkout event.');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const insertedEvent = await client.query(
+      `INSERT INTO stripe_webhook_events (event_id, event_type)
+       VALUES ($1, $2) ON CONFLICT (event_id) DO NOTHING RETURNING event_id`,
+      [event.id, event.type],
+    );
+    if (!insertedEvent.rows[0]) {
+      await client.query('COMMIT');
+      return;
+    }
+
+    const paymentResult = await client.query(
+      `SELECT p.id, p.order_id, p.checkout_session_id, p.amount_cents, p.currency,
+              p.status AS payment_status, p.slot_released_at,
+              o.status AS order_status, o.collection_slot_id
+         FROM order_payments p
+         JOIN orders o ON o.id = p.order_id
+        WHERE p.id = $1 AND o.id = $2
+        FOR UPDATE OF p, o`,
+      [paymentId, orderId],
+    );
+    const payment = paymentResult.rows[0];
+    if (
+      !payment || payment.checkout_session_id !== session.id ||
+      payment.amount_cents !== session.amount_total || payment.currency !== session.currency
+    ) {
+      throw new Error('Stripe Checkout event does not match a pending payment.');
+    }
+
+    if (
+      event.type !== 'checkout.session.expired' &&
+      session.status === 'complete' && session.payment_status === 'paid' &&
+      payment.payment_status === 'pending'
+    ) {
+      const paymentIntentId = typeof session.payment_intent === 'string'
+        ? session.payment_intent
+        : session.payment_intent?.id ?? null;
+      await client.query(
+        `UPDATE order_payments
+            SET status = 'paid', payment_intent_id = $1, paid_at = NOW(), updated_at = NOW()
+          WHERE id = $2 AND status = 'pending'`,
+        [paymentIntentId, payment.id],
+      );
+    } else if (
+      (event.type === 'checkout.session.expired' && session.status === 'expired' ||
+        event.type === 'checkout.session.async_payment_failed' && session.status === 'complete') &&
+      payment.payment_status === 'pending'
+    ) {
+      const paymentStatus = event.type === 'checkout.session.expired' ? 'expired' : 'failed';
+      await client.query(
+        `UPDATE order_payments
+            SET status = $1, slot_released_at = COALESCE(slot_released_at, NOW()), updated_at = NOW()
+          WHERE id = $2 AND status = 'pending'`,
+        [paymentStatus, payment.id],
+      );
+      if (!payment.slot_released_at) {
+        await client.query(
+          'UPDATE collection_slots SET reserved = GREATEST(reserved - 1, 0) WHERE id = $1',
+          [payment.collection_slot_id],
+        );
+      }
+      if (payment.order_status === 'Pending') {
+        await client.query(
+          `UPDATE orders SET status = 'Cancelled', updated_at = NOW() WHERE id = $1 AND status = 'Pending'`,
+          [payment.order_id],
+        );
+        await client.query(
+          `INSERT INTO order_status_history (id, order_id, status)
+           VALUES ($1, $2, 'Cancelled')`,
+          [randomUUID(), payment.order_id],
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function createApp(pool, dependencies = {}) {
   const app = express();
+  const stripeClient = Object.hasOwn(dependencies, 'stripeClient')
+    ? dependencies.stripeClient
+    : createStripeClient();
+  const webhookSecret = dependencies.webhookSecret ?? process.env.STRIPE_WEBHOOK_SECRET;
   const { origins: allowedOrigins, allowsVercelPreview } = getAllowedOrigins();
 
   app.use(cors({
@@ -234,6 +346,33 @@ function createApp(pool) {
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   }));
+
+  app.post('/api/payments/stripe/webhook', express.raw({ type: 'application/json', limit: '64kb' }), async (request, response) => {
+    if (!stripeClient || !webhookSecret) {
+      response.status(503).json({ success: false, message: 'Stripe webhook processing is not configured.' });
+      return;
+    }
+
+    let event;
+    try {
+      event = stripeClient.webhooks.constructEvent(
+        request.body,
+        request.get('stripe-signature'),
+        webhookSecret,
+      );
+    } catch {
+      response.status(400).json({ success: false, message: 'Invalid Stripe webhook signature.' });
+      return;
+    }
+
+    try {
+      await processStripeWebhookEvent(pool, event);
+      response.json({ received: true });
+    } catch {
+      response.status(400).json({ success: false, message: 'Stripe event could not be matched to a payment.' });
+    }
+  });
+
   app.use(express.json({ limit: '32kb' }));
 
   app.get('/api/health', async (request, response) => {
@@ -717,13 +856,30 @@ function createApp(pool) {
         [request.user.id],
       );
       const orders = await Promise.all(result.rows.map(({ id }) => loadOrder(pool, id)));
-      response.json({ success: true, orders, firstOrderDiscountEligible: orders.length === 0 });
+      const paymentResult = await pool.query(
+        `SELECT EXISTS (
+           SELECT 1 FROM orders o
+           LEFT JOIN order_payments p ON p.order_id = o.id
+            WHERE o.student_id = $1
+              AND (p.status = 'paid' OR (p.id IS NULL AND o.discount_cents > 0))
+         ) AS has_used_first_order_discount`,
+        [request.user.id],
+      );
+      response.json({
+        success: true,
+        orders,
+        firstOrderDiscountEligible: !paymentResult.rows[0].has_used_first_order_discount,
+      });
     } catch {
       response.status(500).json({ success: false, message: 'Unable to load your orders right now.' });
     }
   });
 
-  app.post('/api/student/orders', requireRole('student'), async (request, response) => {
+  app.post('/api/student/orders', requireRole('student'), (request, response) => {
+    response.status(410).json({ success: false, message: 'Use online checkout to place an order.' });
+  });
+
+  app.post('/api/student/payments/checkout', requireRole('student'), async (request, response) => {
     const { items, collectionSlotId, idempotencyKey } = request.body;
     if (
       !Array.isArray(items) || items.length === 0 || items.length > 20 ||
@@ -732,6 +888,11 @@ function createApp(pool) {
       !collectionSlotId || !idempotencyKey || typeof idempotencyKey !== 'string' || idempotencyKey.length > 80
     ) {
       response.status(400).json({ success: false, message: 'Choose menu items and a collection time to place your order.' });
+      return;
+    }
+
+    if (!stripeClient || !webhookSecret) {
+      response.status(503).json({ success: false, message: 'Online payments are not configured. Set the Stripe test key and webhook secret on the API server.' });
       return;
     }
 
@@ -746,25 +907,82 @@ function createApp(pool) {
       .update(JSON.stringify({ items: normalizedItems, collectionSlotId }))
       .digest('hex');
 
+    try {
+      getClientOrigin(process.env.CLIENT_URL);
+    } catch {
+      response.status(503).json({ success: false, message: 'Set a valid CLIENT_URL on the API server before accepting online payments.' });
+      return;
+    }
+
     const client = await pool.connect();
-    let orderId = '';
+    let checkout = null;
     let wasCreated = false;
     try {
       await client.query('BEGIN');
-      await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [request.user.id]);
+      const studentResult = await client.query(
+        'SELECT id, email FROM users WHERE id = $1 FOR UPDATE',
+        [request.user.id],
+      );
+      const student = studentResult.rows[0];
       const existing = await client.query(
-        'SELECT id, request_hash FROM orders WHERE student_id = $1 AND idempotency_key = $2',
+        `SELECT o.id AS order_id, o.order_number, o.request_hash, o.total_cents,
+                p.id AS payment_id, p.status AS payment_status, p.checkout_session_id
+           FROM orders o JOIN order_payments p ON p.order_id = o.id
+          WHERE o.student_id = $1 AND o.idempotency_key = $2
+          FOR UPDATE OF o, p`,
         [request.user.id, idempotencyKey],
       );
       if (existing.rows[0]) {
         if (existing.rows[0].request_hash !== requestHash) {
-          await client.query('ROLLBACK');
-          response.status(409).json({ success: false, message: 'This order request was already used. Refresh checkout and try again.' });
+          throw Object.assign(new Error('This order request was already used. Refresh checkout and try again.'), { status: 409 });
+        }
+        if (existing.rows[0].payment_status !== 'pending' && existing.rows[0].payment_status !== 'paid') {
+          throw Object.assign(new Error('This payment attempt has ended. Start a new checkout to try again.'), { status: 409 });
+        }
+        if (existing.rows[0].payment_status === 'paid') {
+          await client.query('COMMIT');
+          response.json({
+            success: true,
+            paymentId: existing.rows[0].payment_id,
+            orderId: existing.rows[0].order_id,
+            paymentStatus: 'paid',
+            checkoutUrl: null,
+          });
           return;
         }
-        orderId = existing.rows[0].id;
+        checkout = {
+          paymentId: existing.rows[0].payment_id,
+          orderId: existing.rows[0].order_id,
+          orderNumber: existing.rows[0].order_number,
+          totalCents: existing.rows[0].total_cents,
+          checkoutSessionId: existing.rows[0].checkout_session_id,
+          email: student.email,
+        };
         await client.query('COMMIT');
       } else {
+        const pendingPayment = await client.query(
+          `SELECT p.id AS payment_id, p.status AS payment_status, p.checkout_session_id,
+                  o.id AS order_id, o.order_number, o.total_cents, o.request_hash
+             FROM order_payments p JOIN orders o ON o.id = p.order_id
+            WHERE o.student_id = $1 AND p.status = 'pending'
+            LIMIT 1 FOR UPDATE OF p`,
+          [request.user.id],
+        );
+        if (pendingPayment.rows[0]) {
+          if (pendingPayment.rows[0].request_hash !== requestHash) {
+            throw Object.assign(new Error('Finish or resume your pending payment before starting another order.'), { status: 409 });
+          }
+          checkout = {
+            paymentId: pendingPayment.rows[0].payment_id,
+            orderId: pendingPayment.rows[0].order_id,
+            orderNumber: pendingPayment.rows[0].order_number,
+            totalCents: pendingPayment.rows[0].total_cents,
+            checkoutSessionId: pendingPayment.rows[0].checkout_session_id,
+            email: student.email,
+          };
+          await client.query('COMMIT');
+        } else {
+
         const menuResult = await client.query(
           `SELECT id, vendor_id, name, price_cents
              FROM menu_items
@@ -809,14 +1027,20 @@ function createApp(pool) {
         });
         const subtotalCents = orderItems.reduce((sum, item) => sum + item.lineTotalCents, 0);
         const previousOrders = await client.query(
-          'SELECT EXISTS (SELECT 1 FROM orders WHERE student_id = $1) AS has_previous_order',
+           `SELECT EXISTS (
+             SELECT 1 FROM orders o
+             LEFT JOIN order_payments p ON p.order_id = o.id
+              WHERE o.student_id = $1
+               AND (p.status = 'paid' OR (p.id IS NULL AND o.discount_cents > 0))
+            ) AS has_previous_order`,
           [request.user.id],
         );
         const discountCents = previousOrders.rows[0].has_previous_order
           ? 0
           : Math.round((subtotalCents * FIRST_ORDER_DISCOUNT_PERCENT) / 100);
         const totalCents = subtotalCents - discountCents + SERVICE_FEE_CENTS;
-        orderId = randomUUID();
+        const orderId = randomUUID();
+        const paymentId = randomUUID();
         const orderNumber = `CE-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString('hex').toUpperCase()}`;
 
         await client.query(
@@ -841,23 +1065,126 @@ function createApp(pool) {
           [collectionSlotId],
         );
         await client.query(
+          `INSERT INTO order_payments
+            (id, order_id, provider, amount_cents, currency, status)
+           VALUES ($1, $2, 'stripe', $3, 'zar', 'pending')`,
+          [paymentId, orderId, totalCents],
+        );
+        await client.query(
           `INSERT INTO order_status_history (id, order_id, status, changed_by)
            VALUES ($1, $2, 'Pending', $3)`,
           [randomUUID(), orderId, request.user.id],
         );
         await client.query('COMMIT');
+        checkout = { paymentId, orderId, orderNumber, totalCents, checkoutSessionId: null, email: student.email };
         wasCreated = true;
+        }
       }
-    } catch {
+    } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
-      response.status(500).json({ success: false, message: 'Unable to place your order right now. Your discount has not been used.' });
+      response.status(error.status ?? 500).json({
+        success: false,
+        message: error.status ? error.message : 'Unable to start online checkout right now.',
+      });
       return;
     } finally {
       client.release();
     }
 
-    const order = await loadOrder(pool, orderId);
-    response.status(wasCreated ? 201 : 200).json({ success: true, order });
+    try {
+      let session;
+      if (checkout.checkoutSessionId) {
+        session = await stripeClient.checkout.sessions.retrieve(checkout.checkoutSessionId);
+        if (session.status === 'expired') {
+          response.status(409).json({ success: false, message: 'This checkout session expired. Wait for its status to update, then start a new order.' });
+          return;
+        }
+        if (session.status === 'complete') {
+          response.status(202).json({
+            success: true,
+            paymentId: checkout.paymentId,
+            orderId: checkout.orderId,
+            paymentStatus: 'pending',
+            checkoutUrl: null,
+          });
+          return;
+        }
+      } else {
+        const urls = buildCheckoutReturnUrls(checkout.paymentId, process.env.CLIENT_URL);
+        session = await stripeClient.checkout.sessions.create({
+          mode: 'payment',
+          payment_method_types: ['card'],
+          customer_email: checkout.email,
+          client_reference_id: checkout.paymentId,
+          line_items: [{
+            price_data: {
+              currency: 'zar',
+              unit_amount: checkout.totalCents,
+              product_data: { name: `Campus Eats order ${checkout.orderNumber}` },
+            },
+            quantity: 1,
+          }],
+          metadata: { paymentId: checkout.paymentId, orderId: checkout.orderId },
+          payment_intent_data: { metadata: { paymentId: checkout.paymentId, orderId: checkout.orderId } },
+          success_url: urls.successUrl,
+          cancel_url: urls.cancelUrl,
+        }, { idempotencyKey: `campuseats-${checkout.paymentId}` });
+
+        if (!session.url) {
+          throw new Error('Stripe did not return a Checkout URL.');
+        }
+        await pool.query(
+          `UPDATE order_payments SET checkout_session_id = $1, updated_at = NOW()
+            WHERE id = $2 AND status = 'pending'`,
+          [session.id, checkout.paymentId],
+        );
+      }
+
+      response.status(wasCreated ? 201 : 200).json({
+        success: true,
+        paymentId: checkout.paymentId,
+        orderId: checkout.orderId,
+        paymentStatus: 'pending',
+        checkoutUrl: session.status === 'open' ? session.url : null,
+      });
+    } catch {
+      response.status(502).json({ success: false, message: 'Unable to start Stripe Checkout. Retry safely or contact support.' });
+    }
+  });
+
+  app.get('/api/student/payments/:paymentId', requireRole('student'), async (request, response) => {
+    try {
+      const result = await pool.query(
+        `SELECT p.id, p.status, p.checkout_session_id, p.order_id
+           FROM order_payments p JOIN orders o ON o.id = p.order_id
+          WHERE p.id = $1 AND o.student_id = $2`,
+        [request.params.paymentId, request.user.id],
+      );
+      const payment = result.rows[0];
+      if (!payment) {
+        response.status(404).json({ success: false, message: 'Payment not found.' });
+        return;
+      }
+
+      let checkoutUrl = null;
+      if (payment.status === 'pending' && payment.checkout_session_id && stripeClient) {
+        try {
+          const session = await stripeClient.checkout.sessions.retrieve(payment.checkout_session_id);
+          if (session.status === 'open') checkoutUrl = session.url;
+        } catch {
+          checkoutUrl = null;
+        }
+      }
+      response.json({
+        success: true,
+        paymentId: payment.id,
+        paymentStatus: payment.status,
+        checkoutUrl,
+        order: await loadOrder(pool, payment.order_id),
+      });
+    } catch {
+      response.status(500).json({ success: false, message: 'Unable to load this payment right now.' });
+    }
   });
 
   app.get('/api/vendor/orders', requireRole('vendor'), async (request, response) => {
@@ -868,7 +1195,9 @@ function createApp(pool) {
         return;
       }
       const result = await pool.query(
-        'SELECT id FROM orders WHERE vendor_id = $1 ORDER BY created_at DESC',
+        `SELECT o.id FROM orders o
+           JOIN order_payments p ON p.order_id = o.id AND p.status = 'paid'
+          WHERE o.vendor_id = $1 ORDER BY o.created_at DESC`,
         [vendorResult.rows[0].id],
       );
       const orders = await Promise.all(result.rows.map(({ id }) => loadOrder(pool, id)));
@@ -886,7 +1215,8 @@ function createApp(pool) {
       const result = await client.query(
         `SELECT o.id, o.status FROM orders o
            JOIN vendors v ON v.id = o.vendor_id
-          WHERE o.order_number = $1 AND v.owner_user_id = $2
+          JOIN order_payments p ON p.order_id = o.id AND p.status = 'paid'
+         WHERE o.order_number = $1 AND v.owner_user_id = $2
           FOR UPDATE OF o`,
         [request.params.orderId, request.user.id],
       );

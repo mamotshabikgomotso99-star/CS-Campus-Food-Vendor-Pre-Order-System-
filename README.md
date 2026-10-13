@@ -35,7 +35,24 @@ The Blueprint uses Render's free web-service plan to avoid provisioning a paid s
 
 ## First-order discount
 
-The first successfully created student order receives 20% off its food subtotal. The service fee is excluded. Eligibility, availability, prices, and totals are checked by the API. Failed checkouts do not consume the offer; later cancellations do not restore it.
+The first successfully paid student order receives 20% off its food subtotal. The service fee is excluded. Eligibility, availability, prices, and totals are checked by the API. Failed or expired payments do not consume the offer; later cancellations do not restore it.
+
+## Stripe test checkout
+
+Student orders use Stripe-hosted Checkout in test mode. Campus Eats never receives card details. Configure `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` in `server/.env` using test-mode values; live keys are rejected by this prototype. `CLIENT_URL` must be the frontend origin.
+
+For local webhook testing, install and authenticate the Stripe CLI, then run this in a separate terminal:
+
+```powershell
+stripe listen --forward-to http://127.0.0.1:5000/api/payments/stripe/webhook
+```
+
+Copy the `whsec_...` value printed by the CLI directly into `server/.env` as `STRIPE_WEBHOOK_SECRET`, then restart the API. Do not commit or share either Stripe secret. Keep the CLI listener running while testing.
+
+Sign in as a student, select a menu item and collection slot, and continue to payment. Use Stripe's test card `4242 4242 4242 4242`, any future expiry date, and any CVC. The student return page remains pending until the signed webhook arrives; the vendor sees the order only after verified payment. The cancel link returns to the open Checkout Session when available. Configure the deployed Stripe test webhook at `https://<api-host>/api/payments/stripe/webhook` for `checkout.session.completed`, `checkout.session.async_payment_succeeded`, and `checkout.session.expired`.
+
+This is test-mode integration only. Live payments, production webhooks, refunds, and operational approval remain outstanding.
+Because refunds are not implemented, vendors cannot cancel a paid order in the prototype. Configure an explicit refund policy and provider refund flow before enabling cancellations or live payments.
 
 ## Checks
 
@@ -50,4 +67,4 @@ GitHub Actions runs the client lint, typecheck, and production build checks plus
 
 ## Prototype limitations
 
-Email verification and password recovery are not connected to an email service. Payments, notifications, production hosting, and some vendor discovery/profile/dashboard features remain unimplemented. The menu catalog starts with prototype seed items; vendor edits are persisted, and menu prices and availability used at checkout are server-owned.
+Email verification and password recovery are not connected to an email service. Production payments, refunds, notifications, production hosting, and some vendor discovery/profile/dashboard features remain unimplemented. The menu catalog starts with prototype seed items; vendor edits are persisted, and menu prices and availability used at checkout are server-owned.

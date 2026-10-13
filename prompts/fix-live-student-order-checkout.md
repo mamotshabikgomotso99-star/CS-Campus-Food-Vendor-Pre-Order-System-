@@ -29,7 +29,7 @@ The prototype has a working Express API and live data hooks, but some student-fa
   - `items[]` with `menuItemId` and `quantity`
   - `collectionSlotId`
   - `idempotencyKey`
-- Do not collect card details or imply an online charge; payment processing is not integrated, so tell students to pay at collection.
+- Require Stripe-hosted online checkout; do not collect card details in Campus Eats.
 - Keep pricing, availability, discount eligibility, and final totals server-authoritative.
 - Handle success states, duplicate request protection, and rejection messages cleanly.
 

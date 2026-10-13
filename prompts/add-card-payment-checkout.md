@@ -1,5 +1,7 @@
 # Add card payment option to the student checkout flow
 
+> Superseded: this prompt describes a simulated client-side card form. Online checkout now uses the server-side Stripe integration specified in `prompts/enable-stripe-online-payments.md`. Do not collect card details in Campus Eats or implement the simulation requirements below.
+
 ## Goal
 Add a payment section to the existing student checkout so a customer can enter card details and complete a purchase before the order is submitted. Keep the implementation aligned with the current Campus Eats prototype: the checkout UI should feel realistic, but it should not integrate with a real payment provider or expose secrets.
 

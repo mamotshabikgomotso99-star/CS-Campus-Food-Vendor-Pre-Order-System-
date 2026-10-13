@@ -123,6 +123,7 @@ export type OrderItemLine = {
 export type ApiOrder = {
   id: string;
   orderId: string;
+  paymentId: string | null;
   vendorId: string;
   vendor: string;
   student: string;
@@ -133,9 +134,12 @@ export type ApiOrder = {
   serviceFeeCents: number;
   totalCents: number;
   status: "Pending" | "Confirmed" | "Preparing" | "Ready for Collection" | "Collected" | "Cancelled";
+  paymentStatus: "pending" | "paid" | "expired" | "failed" | "unverified";
   collectionAt: string;
   createdAt: string;
 };
+
+export type StudentPaymentStatus = "pending" | "paid" | "expired" | "failed" | "unverified";
 
 export type StudentOrdersResponse = {
   success: true;
@@ -258,12 +262,28 @@ export async function getStudentOrders() {
   return request<StudentOrdersResponse>("/api/student/orders");
 }
 
-export async function createStudentOrder(payload: {
+export async function createStudentCheckout(payload: {
   items: Array<{ menuItemId: string; quantity: number }>;
   collectionSlotId: string;
   idempotencyKey: string;
 }) {
-  return request<{ success: true; order: ApiOrder }>("/api/student/orders", { payload });
+  return request<{
+    success: true;
+    paymentId: string;
+    orderId: string;
+    paymentStatus: StudentPaymentStatus;
+    checkoutUrl: string | null;
+  }>("/api/student/payments/checkout", { payload });
+}
+
+export async function getStudentPayment(paymentId: string) {
+  return request<{
+    success: true;
+    paymentId: string;
+    paymentStatus: StudentPaymentStatus;
+    checkoutUrl: string | null;
+    order: ApiOrder;
+  }>(`/api/student/payments/${encodeURIComponent(paymentId)}`);
 }
 
 export async function getVendorOrders() {

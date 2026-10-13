@@ -5,11 +5,10 @@ import { useRouter } from "next/navigation";
 import { Minus, Plus } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import {
-  createStudentOrder,
+  createStudentCheckout,
   getCollectionSlots,
   getMenuItems,
   getStudentOrders,
-  type ApiOrder,
   type CollectionSlot,
   type MenuApiItem,
 } from "@/lib/api";
@@ -48,7 +47,6 @@ export function StudentCheckout({ initialVendorId = "", initialItemId = "" }: {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [firstOrderDiscountEligible, setFirstOrderDiscountEligible] = useState(false);
   const [error, setError] = useState("");
-  const [placedOrder, setPlacedOrder] = useState<ApiOrder | null>(null);
 
   useEffect(() => {
     let isCurrent = true;
@@ -129,7 +127,6 @@ export function StudentCheckout({ initialVendorId = "", initialItemId = "" }: {
       else next[itemId] = quantity;
       return next;
     });
-    setPlacedOrder(null);
     setError("");
   };
 
@@ -140,7 +137,6 @@ export function StudentCheckout({ initialVendorId = "", initialItemId = "" }: {
     setSelectedSlotId("");
     setIsSlotsLoading(true);
     idempotencyKey.current = null;
-    setPlacedOrder(null);
   };
 
   const handleSubmit = async () => {
@@ -150,14 +146,20 @@ export function StudentCheckout({ initialVendorId = "", initialItemId = "" }: {
     setError("");
     idempotencyKey.current ??= window.crypto.randomUUID();
     try {
-      const response = await createStudentOrder({
+      const response = await createStudentCheckout({
         items: selectedItems.map((item) => ({ menuItemId: item.id, quantity: item.quantity })),
         collectionSlotId: selectedSlotId,
         idempotencyKey: idempotencyKey.current,
       });
-      setPlacedOrder(response.order);
-      setFirstOrderDiscountEligible(false);
-      idempotencyKey.current = null;
+      if (response.paymentStatus === "paid") {
+        router.push("/student/orders");
+        return;
+      }
+      if (!response.checkoutUrl) {
+        router.push(`/student/orders/payment-result?paymentId=${encodeURIComponent(response.paymentId)}`);
+        return;
+      }
+      window.location.assign(response.checkoutUrl);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to place your order.");
     } finally {
@@ -175,24 +177,7 @@ export function StudentCheckout({ initialVendorId = "", initialItemId = "" }: {
           ? "Your first order gets 20% off food items."
           : "Choose available items and a collection time."}
     >
-      {placedOrder ? (
-        <section className="rounded-[24px] border border-emerald-200 bg-emerald-50 p-6">
-          <h2 className="text-xl font-semibold text-emerald-900">Order placed</h2>
-          <p className="mt-2 text-sm text-emerald-800">
-            Order {placedOrder.id} has been placed and is awaiting vendor confirmation. {placedOrder.discountCents > 0
-              ? `Your first-order discount of ${formatMoney(placedOrder.discountCents)} was applied.`
-              : `Your total is ${formatMoney(placedOrder.totalCents)}.`}
-          </p>
-          <button
-            type="button"
-            onClick={() => router.push("/student/orders")}
-            className="mt-4 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800"
-          >
-            Track order
-          </button>
-        </section>
-      ) : (
-        <section className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+      <section className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
           <div className="rounded-[24px] border border-violet-100 bg-white p-4 shadow-sm sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-xl font-semibold text-slate-900">Order items</h2>
@@ -273,9 +258,9 @@ export function StudentCheckout({ initialVendorId = "", initialItemId = "" }: {
             ) : null}
 
             <div className="mt-5 rounded-xl border border-violet-200 bg-violet-50 p-4">
-              <h3 className="text-sm font-semibold uppercase tracking-[0.08em] text-violet-700">Payment at collection</h3>
+              <h3 className="text-sm font-semibold uppercase tracking-[0.08em] text-violet-700">Online payment</h3>
               <p className="mt-2 text-sm leading-6 text-slate-700">
-                Online payment is not enabled. Place your order now and pay the vendor when you collect it.
+                Continue to Stripe’s secure checkout to pay by card. Your order is sent to the vendor after payment is verified.
               </p>
             </div>
 
@@ -296,11 +281,10 @@ export function StudentCheckout({ initialVendorId = "", initialItemId = "" }: {
               disabled={isSubmitting || isEligibilityLoading || isMenuLoading || isSlotsLoading || !selectedItems.length || !selectedSlotId}
               className="mt-5 w-full rounded-xl bg-violet-700 px-4 py-3 text-sm font-semibold text-white transition hover:bg-violet-800 disabled:cursor-not-allowed disabled:bg-slate-300"
             >
-              {isSubmitting ? "Placing order..." : "Place order"}
+              {isSubmitting ? "Opening secure checkout..." : "Continue to payment"}
             </button>
           </div>
         </section>
-      )}
     </DashboardLayout>
   );
 }
