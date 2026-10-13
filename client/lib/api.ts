@@ -45,6 +45,16 @@ function getApiBaseUrl() {
   const localHosts = new Set(["localhost", "127.0.0.1"]);
   if (
     typeof window !== "undefined" &&
+    !localHosts.has(window.location.hostname) &&
+    localHosts.has(configuredUrl.hostname)
+  ) {
+    throw new Error(
+      "This deployed site is configured with a local API URL. Set NEXT_PUBLIC_API_URL to your deployed API origin in Vercel, then redeploy.",
+    );
+  }
+
+  if (
+    typeof window !== "undefined" &&
     localHosts.has(configuredUrl.hostname) &&
     localHosts.has(window.location.hostname)
   ) {
@@ -273,7 +283,7 @@ export async function createStudentCheckout(payload: {
     orderId: string;
     paymentStatus: StudentPaymentStatus;
     checkoutUrl: string | null;
-  }>("/api/student/payments/checkout", { payload });
+  }>("/api/payments/create-checkout-session", { payload });
 }
 
 export async function getStudentPayment(paymentId: string) {
