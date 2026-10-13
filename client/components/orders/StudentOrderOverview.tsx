@@ -5,7 +5,7 @@ import { BadgeCheck, Clock3, Coffee, Store } from "lucide-react";
 import Link from "next/link";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { getStudentOrders, type ApiOrder } from "@/lib/api";
+import { getMenuItems, getStudentOrders, type ApiOrder } from "@/lib/api";
 
 const statIcons = [Store, BadgeCheck, Coffee, Clock3];
 
@@ -16,6 +16,8 @@ function formatMoney(cents: number) {
 export function StudentOrderOverview() {
   const [orders, setOrders] = useState<ApiOrder[] | null>(null);
   const [error, setError] = useState("");
+  const [availableVendorCount, setAvailableVendorCount] = useState<number | null>(null);
+  const [vendorCountError, setVendorCountError] = useState(false);
 
   useEffect(() => {
     let isCurrent = true;
@@ -31,6 +33,15 @@ export function StudentOrderOverview() {
       }
     };
     void loadOrders();
+    void getMenuItems()
+      .then((response) => {
+        if (isCurrent) {
+          setAvailableVendorCount(new Set(response.items.map((item) => item.vendorId)).size);
+        }
+      })
+      .catch(() => {
+        if (isCurrent) setVendorCountError(true);
+      });
     const intervalId = window.setInterval(loadOrders, 15_000);
     return () => {
       isCurrent = false;
@@ -45,7 +56,11 @@ export function StudentOrderOverview() {
   const stats = [
     { label: "Active Orders", value: orders ? String(activeOrders.length) : "—", hint: orders && activeOrders.length ? `Across ${new Set(activeOrders.map((order) => order.vendor)).size} vendors` : "No orders yet" },
     { label: "Completed Orders", value: orders ? String(completedOrders.length) : "—", hint: completedOrders.length ? "Collected orders" : "None completed yet" },
-    { label: "Available Vendors", value: "9", hint: "Open now" },
+    {
+      label: "Available Vendors",
+      value: availableVendorCount === null ? "—" : String(availableVendorCount),
+      hint: vendorCountError ? "Unable to load vendors" : "Available for ordering",
+    },
     { label: "Pending Orders", value: orders ? String(pendingOrders.length) : "—", hint: pendingOrders.length ? "Need attention" : "No pending orders" },
   ];
 

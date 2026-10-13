@@ -12,7 +12,7 @@ export default function LoginPage() {
   useEffect(() => {
     const identity = readAuthIdentity();
     if (identity?.role === "vendor" || identity?.role === "student") {
-      router.replace("/dashboard");
+      router.replace(`/${identity.role}/dashboard`);
     }
   }, [router]);
 

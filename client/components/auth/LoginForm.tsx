@@ -60,7 +60,7 @@ export function LoginForm() {
         email: response.user?.email ?? form.email.trim(),
         role: accountRole,
       });
-      router.push("/dashboard");
+      router.push(`/${accountRole}/dashboard`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Login failed. Please try again.";
       setErrors({ general: message });
