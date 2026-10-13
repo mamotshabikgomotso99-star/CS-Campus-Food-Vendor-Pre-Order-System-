@@ -129,10 +129,23 @@ function clearSessionCookie(response) {
   );
 }
 
+function normalizeOrigin(origin) {
+  try {
+    const parsedOrigin = new URL(origin);
+    if (parsedOrigin.protocol === 'http:' || parsedOrigin.protocol === 'https:') {
+      return parsedOrigin.origin;
+    }
+  } catch {
+    return origin.replace(/\/+$/, '');
+  }
+  return origin.replace(/\/+$/, '');
+}
+
 function getAllowedOrigins() {
   const configured = (process.env.CLIENT_URL ?? '')
     .split(',')
     .map((origin) => origin.trim())
+    .map(normalizeOrigin)
     .filter(Boolean);
   const vercelHosts = ['.vercel.app', '.vercel-preview.com'];
   const localOrigins = process.env.NODE_ENV === 'production'
@@ -334,7 +347,7 @@ function createApp(pool, dependencies = {}) {
         return;
       }
 
-      const normalizedOrigin = origin.replace(/\/$/, '');
+      const normalizedOrigin = normalizeOrigin(origin);
       if (allowedOrigins.has(normalizedOrigin) || allowsVercelPreview(normalizedOrigin)) {
         callback(null, true);
         return;
@@ -879,7 +892,10 @@ function createApp(pool, dependencies = {}) {
     response.status(410).json({ success: false, message: 'Use online checkout to place an order.' });
   });
 
-  app.post('/api/student/payments/checkout', requireRole('student'), async (request, response) => {
+  app.post(
+    ['/api/payments/create-checkout-session', '/api/student/payments/checkout'],
+    requireRole('student'),
+    async (request, response) => {
     const { items, collectionSlotId, idempotencyKey } = request.body;
     if (
       !Array.isArray(items) || items.length === 0 || items.length > 20 ||

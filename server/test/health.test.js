@@ -4,9 +4,9 @@ const { createApp } = require('../app');
 
 const CLIENT_ORIGIN = 'https://cs-campus-food-vendor-pre-order-sys-ten.vercel.app';
 
-async function startServer(context, pool) {
+async function startServer(context, pool, clientUrl = CLIENT_ORIGIN) {
   const previousClientUrl = process.env.CLIENT_URL;
-  process.env.CLIENT_URL = CLIENT_ORIGIN;
+  process.env.CLIENT_URL = clientUrl;
   const app = createApp(pool);
   if (previousClientUrl === undefined) {
     delete process.env.CLIENT_URL;
@@ -70,6 +70,22 @@ test('Vercel origin receives credentialed API preflight headers', async (context
   assert.equal(response.headers.get('access-control-allow-origin'), CLIENT_ORIGIN);
   assert.equal(response.headers.get('access-control-allow-credentials'), 'true');
   assert.match(response.headers.get('access-control-allow-headers') ?? '', /content-type/i);
+});
+
+test('configured frontend origin with trailing slash matches browser origin', async (context) => {
+  const server = await startServer(context, { async query() { return { rows: [] }; } }, `${CLIENT_ORIGIN}/`);
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/login`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: CLIENT_ORIGIN,
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type',
+    },
+  });
+
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), CLIENT_ORIGIN);
+  assert.equal(response.headers.get('access-control-allow-credentials'), 'true');
 });
 
 test('unconfigured origins do not receive CORS access', async (context) => {

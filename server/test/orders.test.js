@@ -232,7 +232,7 @@ test('first-order discount is server-owned, one-time, and account-specific', {
   };
 
   const placePaidOrder = async (cookie, payload) => {
-    const checkout = await send('/api/student/payments/checkout', {
+    const checkout = await send('/api/payments/create-checkout-session', {
       method: 'POST', cookie, payload,
     });
     if (checkout.data.paymentStatus === 'pending' && checkout.data.checkoutUrl) {
