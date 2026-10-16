@@ -141,14 +141,15 @@ The `server` application now has a persistent student-ordering vertical slice:
 - Vendors can list, add, edit, and remove their own menu items through authenticated API routes. Items already referenced by orders are retired by setting them unavailable, preserving order history.
 - Student checkout persists order/item snapshots, validates availability and collection slots, computes the service fee and totals server-side, and gives 20% off the food subtotal on the first successfully paid order only.
 - Vendor order lists and allowed status transitions are persisted; student and vendor order views refresh from the API.
+- TUT Soshanguve South vendor map coordinates are admin-managed; students can browse saved vendor pins and collection-point text.
 - `npm --prefix server test` runs a database-backed integration test for first-order eligibility, retries, concurrent submissions, and account isolation.
-- Email verification, password recovery, notifications, and administrator APIs are not integrated. Stripe-hosted Checkout is implemented in test mode; production payment processing is not enabled.
+- Student email verification and password recovery use the configured SMTP service. Vendor-location administration is implemented; broader administrator operations are not integrated. Stripe-hosted Checkout is implemented in test mode; production payment processing is not enabled.
 
 ### Current prototype limitations
 
 - The API requires a PostgreSQL `DATABASE_URL`; local setup is documented in `README.md`.
 - Student/vendor page navigation is not itself protected; data-changing and order APIs enforce the server session and role.
-- Vendor discovery, most dashboard metrics, profile editing, email verification, and password recovery remain prototype-only or unconfigured.
+- Vendor discovery remains prototype-driven; map pins require an administrator to confirm and save each vendor location. Most dashboard metrics and profile editing remain prototype-only or unconfigured.
 - Production payment processing, refunds, notification, audit, and administrator workflows are not implemented.
 - Automated browser, accessibility, and performance test suites are not present.
 
@@ -302,7 +303,7 @@ The plan assumes two-week sprints. A sprint may be shortened or extended only th
 **Acceptance criteria**
 
 - A student and vendor can register through the UI.
-- Unverified accounts cannot use protected ordering capabilities.
+- In production, newly registered students cannot sign in until their email is verified; local development may sign in without verification.
 - Invalid credentials return a safe, consistent error.
 - Successful login redirects users to the correct role dashboard.
 

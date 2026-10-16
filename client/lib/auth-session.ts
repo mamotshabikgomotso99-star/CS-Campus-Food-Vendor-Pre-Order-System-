@@ -39,7 +39,7 @@ export function readAuthIdentity(): AuthIdentity | null {
     if (
       typeof identity.fullName === "string" &&
       typeof identity.email === "string" &&
-      (identity.role === "student" || identity.role === "vendor")
+      (identity.role === "student" || identity.role === "vendor" || identity.role === "admin")
     ) {
       cachedIdentityValue = storedIdentity;
       cachedIdentity = {

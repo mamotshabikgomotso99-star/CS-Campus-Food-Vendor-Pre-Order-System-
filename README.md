@@ -16,6 +16,24 @@ npm --prefix client run dev -- --hostname 127.0.0.1
 
 Open `http://127.0.0.1:3000`. The API applies versioned SQL migrations from `server/migrations/` at startup and seeds the prototype menu and collection slots.
 
+## Admin and vendor onboarding
+
+Vendors apply at `/vendor/apply`; accounts remain pending until approved by an admin. To bootstrap an administrator on a fresh database, set `ADMIN_EMAIL`, `ADMIN_NAME`, and a unique `ADMIN_PASSWORD` of at least 12 characters in the private `server/.env`, then run `npm --prefix server run create-admin`. Admins sign in at `/admin/login` and review requests at `/admin/dashboard`. Admin registration is not public.
+
+## TUT Soshanguve South vendor map
+
+Students see the vendor map directly on `/student/dashboard` and can switch to **Map** on `/student/vendors`. Vendors without saved coordinates remain listed with their collection-point text and are never placed at an estimated location. Map markers include a menu link and walking directions.
+
+Admins can open **Vendor locations** from `/admin/dashboard` (or visit `/admin/locations`) and enter campus-confirmed latitude and longitude for an approved vendor. The API restricts saved coordinates to the TUT Soshanguve South campus boundary. Coordinates are intentionally not seeded; an admin must confirm each collection point before it appears on the student map.
+
+The map uses the OpenStreetMap standard raster tile endpoint by default and shows required attribution. Its center and bounds are based on [OpenStreetMap way 413120107](https://www.openstreetmap.org/way/413120107). `NEXT_PUBLIC_MAP_TILE_URL` can point to another compatible tile provider. The community OSM tile service is best-effort, has no service-level agreement, and prohibits bulk/offline tile downloads; use normal interactive viewing only. For production traffic, select a tile provider or hosting plan suitable for expected usage.
+
+## SMTP email delivery
+
+Copy the SMTP placeholders from `server/.env.example` into the private `server/.env` and replace them with credentials from your SMTP provider. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, and `EMAIL_FROM` (or `SMTP_FROM`). For port 587 use `SMTP_SECURE=false` with STARTTLS; for port 465 use `SMTP_SECURE=true`. The sender address must be authorized by the provider. Keep all SMTP values out of `client/.env.local` and source control.
+
+Set `CLIENT_URL` to the exact browser-facing origin, for example `http://127.0.0.1:3000` locally or your deployed HTTPS origin. Password-reset links are valid for 30 minutes; student email-verification links are valid for 24 hours. Both are single-use. In production, new student accounts must verify their email before signing in; local non-production sign-in does not require verification. Existing accounts are preserved as verified by the migration. Restart the API after changing SMTP values. For local testing, use an SMTP sandbox/mail-catcher or a provider test inbox; do not use real customer accounts. On deployment, add the same SMTP values as private API-service environment variables and redeploy the API.
+
 ## Deploy the API on Render
 
 The frontend can remain on Vercel while the Express API runs as a separate Render web service. The root `render.yaml` defines the API service and prompts for `DATABASE_URL` and `CLIENT_URL` without storing their values in Git.
@@ -67,4 +85,4 @@ GitHub Actions runs the client lint, typecheck, and production build checks plus
 
 ## Prototype limitations
 
-Email verification and password recovery are not connected to an email service. Production payments, refunds, notifications, production hosting, and some vendor discovery/profile/dashboard features remain unimplemented. The menu catalog starts with prototype seed items; vendor edits are persisted, and menu prices and availability used at checkout are server-owned.
+Email verification and password recovery use the configured SMTP service. Production payments, refunds, notifications, production hosting, and some vendor discovery/profile/dashboard features remain unimplemented. The menu catalog starts with prototype seed items; vendor edits are persisted, and menu prices and availability used at checkout are server-owned.

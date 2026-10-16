@@ -1,4 +1,4 @@
-export type AuthRole = "student" | "vendor";
+export type AuthRole = "student" | "vendor" | "admin";
 
 export type LoginPayload = {
   email: string;
@@ -19,6 +19,8 @@ export type RegisterPayload = {
 export type AuthSuccessResponse = {
   success: true;
   message: string;
+  verificationSent?: boolean;
+  verificationRequired?: boolean;
   role?: AuthRole;
   user?: {
     email: string;
@@ -30,6 +32,27 @@ export type AuthSuccessResponse = {
 export type AuthErrorResponse = {
   success: false;
   message: string;
+  code?: string;
+};
+
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number, public readonly code?: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+export type VendorRequest = {
+  id: string;
+  fullName: string;
+  email: string;
+  vendorName: string;
+  category: string;
+  collectionLocation: string | null;
+  openingTime: string | null;
+  closingTime: string | null;
+  preparationTimeMinutes: number | null;
+  createdAt: string;
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -91,11 +114,14 @@ async function request<T>(
         typeof data.message === "string"
           ? data.message
           : "Unable to process your request right now.";
-      throw new Error(message);
+      throw new ApiError(message, response.status, typeof data.code === "string" ? data.code : undefined);
     }
 
     return data as T;
   } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
     const message = error instanceof Error ? error.message : "Unable to reach the Campus Eats API.";
     throw new Error(message);
   }
@@ -114,7 +140,18 @@ export type MenuApiItem = {
   category: string;
   description: string;
   available: boolean;
+  collectionLocation?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
   imageUrl?: string | null;
+};
+
+export type VendorMapLocation = {
+  id: string;
+  name: string;
+  collectionLocation: string;
+  latitude: number | null;
+  longitude: number | null;
 };
 
 export type CollectionSlot = {
@@ -170,6 +207,46 @@ export async function registerUser(payload: RegisterPayload): Promise<AuthSucces
   return request<AuthSuccessResponse>("/api/auth/register", { payload });
 }
 
+export async function submitVendorRequest(payload: {
+  fullName: string;
+  email: string;
+  password: string;
+  confirmPassword: string;
+  vendorName: string;
+  category: string;
+  collectionLocation: string;
+  openingTime: string;
+  closingTime: string;
+  preparationTimeMinutes: number;
+}): Promise<AuthSuccessResponse> {
+  return request<AuthSuccessResponse>("/api/vendor-requests", { payload });
+}
+
+export async function getVendorRequests() {
+  return request<{ success: true; requests: VendorRequest[] }>("/api/admin/vendor-requests");
+}
+
+export async function getAdminVendorLocations() {
+  return request<{ success: true; vendors: VendorMapLocation[] }>("/api/admin/vendors/locations");
+}
+
+export async function updateAdminVendorLocation(
+  vendorId: string,
+  location: { latitude: number; longitude: number },
+) {
+  return request<{ success: true; vendor: VendorMapLocation }>(
+    `/api/admin/vendors/${encodeURIComponent(vendorId)}/location`,
+    { method: "PATCH", payload: location },
+  );
+}
+
+export async function reviewVendorRequest(requestId: string, status: "approved" | "rejected") {
+  return request<{ success: true; message: string; status: "approved" | "rejected" }>(
+    `/api/admin/vendor-requests/${encodeURIComponent(requestId)}`,
+    { method: "PATCH", payload: { status } },
+  );
+}
+
 export async function requestPasswordReset(email: string): Promise<AuthSuccessResponse> {
   return request<AuthSuccessResponse>("/api/auth/forgot-password", { payload: { email } });
 }
@@ -178,8 +255,12 @@ export async function verifyEmail(email: string): Promise<AuthSuccessResponse> {
   return request<AuthSuccessResponse>("/api/auth/verify-email", { payload: { email } });
 }
 
+export async function confirmEmail(token: string): Promise<AuthSuccessResponse> {
+  return request<AuthSuccessResponse>("/api/auth/confirm-email", { payload: { token } });
+}
+
 export async function resetPassword(payload: {
-  email: string;
+  token: string;
   password: string;
   confirmPassword: string;
 }): Promise<AuthSuccessResponse> {

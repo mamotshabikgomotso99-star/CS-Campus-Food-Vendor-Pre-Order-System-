@@ -1,11 +1,12 @@
 "use client";
 
-import { Search, SlidersHorizontal, Star } from "lucide-react";
+import { List, Map as MapIcon, Search, SlidersHorizontal, Star } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { VendorCoverImage } from "@/components/menu/VendorCoverImage";
+import { CampusVendorMap } from "@/components/map/CampusVendorMap";
 import { getMenuItems, resolveApiUrl, type MenuApiItem } from "@/lib/api";
 
 type VendorSummary = {
@@ -18,6 +19,9 @@ type VendorSummary = {
   eta: string;
   rating: number;
   accent: string;
+  collectionLocation: string | null;
+  latitude: number | null;
+  longitude: number | null;
 };
 
 function buildVendorSummaries(items: MenuApiItem[]): VendorSummary[] {
@@ -28,6 +32,13 @@ function buildVendorSummaries(items: MenuApiItem[]): VendorSummary[] {
     if (existing) {
       if (!existing.imageUrl && item.imageUrl) {
         existing.imageUrl = resolveApiUrl(item.imageUrl);
+      }
+      if (!existing.collectionLocation && item.collectionLocation) {
+        existing.collectionLocation = item.collectionLocation;
+      }
+      if (existing.latitude === null && existing.longitude === null && item.latitude != null && item.longitude != null) {
+        existing.latitude = item.latitude;
+        existing.longitude = item.longitude;
       }
       continue;
     }
@@ -42,6 +53,9 @@ function buildVendorSummaries(items: MenuApiItem[]): VendorSummary[] {
       eta: "Ready now",
       rating: 4.8,
       accent: "from-violet-100 via-violet-50 to-slate-100",
+      collectionLocation: item.collectionLocation ?? null,
+      latitude: item.latitude ?? null,
+      longitude: item.longitude ?? null,
     });
   }
 
@@ -53,6 +67,7 @@ export default function StudentVendorsPage() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [viewMode, setViewMode] = useState<"list" | "map">("list");
 
   useEffect(() => {
     let isCurrent = true;
@@ -79,8 +94,13 @@ export default function StudentVendorsPage() {
   const filteredVendors = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     if (!term) return vendors;
-    return vendors.filter((vendor) => vendor.name.toLowerCase().includes(term) || vendor.category.toLowerCase().includes(term));
+    return vendors.filter((vendor) =>
+      vendor.name.toLowerCase().includes(term) ||
+      vendor.category.toLowerCase().includes(term) ||
+      vendor.collectionLocation?.toLowerCase().includes(term),
+    );
   }, [searchTerm, vendors]);
+  const mappedVendors = filteredVendors.filter((vendor) => vendor.latitude !== null && vendor.longitude !== null);
 
   return (
     <RequireAuth role="student">
@@ -102,13 +122,35 @@ export default function StudentVendorsPage() {
               />
             </div>
 
-            <button
-              type="button"
-              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-medium text-slate-700 transition hover:border-violet-200 hover:text-violet-700"
-            >
-              <SlidersHorizontal className="h-4 w-4" />
-              Filters
-            </button>
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-medium text-slate-700 transition hover:border-violet-200 hover:text-violet-700"
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+                Filters
+              </button>
+              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Vendor view">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("list")}
+                  aria-pressed={viewMode === "list"}
+                  title="List view"
+                  className={`inline-flex h-9 w-9 items-center justify-center rounded-md ${viewMode === "list" ? "bg-white text-emerald-800 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
+                >
+                  <List aria-hidden="true" size={18} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("map")}
+                  aria-pressed={viewMode === "map"}
+                  title="Map view"
+                  className={`inline-flex h-9 w-9 items-center justify-center rounded-md ${viewMode === "map" ? "bg-white text-emerald-800 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
+                >
+                  <MapIcon aria-hidden="true" size={18} />
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -126,6 +168,37 @@ export default function StudentVendorsPage() {
           <p className="mt-5 text-sm text-slate-500">No vendors match your search right now.</p>
         ) : null}
 
+        {viewMode === "map" && !isLoading && !error ? (
+          <section className="mt-5 space-y-4">
+            <CampusVendorMap
+              vendors={mappedVendors.map((vendor) => ({
+                  id: vendor.id,
+                  name: vendor.name,
+                  collectionLocation: vendor.collectionLocation,
+                  latitude: vendor.latitude,
+                  longitude: vendor.longitude,
+                  href: `/student/vendors/${vendor.id}`,
+              }))}
+            />
+            {mappedVendors.length === 0 ? (
+              <p role="status" className="border-t border-slate-200 pt-3 text-sm text-slate-600">
+                No vendor locations have been confirmed on the map yet.
+              </p>
+            ) : null}
+            {filteredVendors.some((vendor) => vendor.latitude === null || vendor.longitude === null) ? (
+              <div className="border-t border-slate-200 pt-3">
+                <h3 className="text-sm font-semibold text-slate-800">Location pin not available</h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  {filteredVendors.filter((vendor) => vendor.latitude === null || vendor.longitude === null).map((vendor) =>
+                    `${vendor.name}${vendor.collectionLocation ? ` · ${vendor.collectionLocation}` : ""}`,
+                  ).join("; ")}
+                </p>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        {viewMode === "list" ? (
         <section className="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           {filteredVendors.map((vendor) => (
             <div key={vendor.id} className="rounded-[28px] border border-violet-100 bg-white p-4 shadow-sm">
@@ -146,6 +219,10 @@ export default function StudentVendorsPage() {
                 </span>
               </div>
               <p className="mt-3 text-sm text-slate-600">{vendor.description}</p>
+              <p className="mt-2 inline-flex items-start gap-2 text-sm text-slate-600">
+                <MapIcon aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
+                <span>{vendor.collectionLocation || "Collection point not listed"}</span>
+              </p>
               <div className="mt-4 flex items-center justify-between text-sm text-slate-500">
                 <span>{vendor.eta}</span>
                 <span className="inline-flex items-center gap-1 font-medium text-slate-700">
@@ -162,6 +239,7 @@ export default function StudentVendorsPage() {
             </div>
           ))}
         </section>
+        ) : null}
       </DashboardLayout>
     </RequireAuth>
   );
