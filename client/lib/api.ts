@@ -56,19 +56,6 @@ export type VendorRequest = {
   createdAt: string;
 };
 
-export type VendorRequest = {
-  id: string;
-  fullName: string;
-  email: string;
-  vendorName: string;
-  category: string;
-  collectionLocation: string | null;
-  openingTime: string | null;
-  closingTime: string | null;
-  preparationTimeMinutes: number | null;
-  createdAt: string;
-};
-
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 function getApiBaseUrl() {
@@ -253,10 +240,6 @@ export async function updateAdminVendorLocation(
     { method: "PATCH", payload: location },
   );
 }
-
-export async function reviewVendorRequest(requestId: string, status: "approved" | "rejected") {
-  return request<{ success: true; message: string; status: "approved" | "rejected" }>(
-    `/api/admin/vendor-requests/${encodeURIComponent(requestId)}`,
 
 export async function reviewVendorRequest(requestId: string, status: "approved" | "rejected") {
   return request<{ success: true; message: string; status: "approved" | "rejected" }>(

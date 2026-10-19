@@ -8,14 +8,9 @@ import { ApiError, loginUser, logoutUser, verifyEmail } from "@/lib/api";
 import { saveAuthIdentity } from "@/lib/auth-session";
 import { validateEmail, validatePassword } from "@/lib/validations";
 import { AuthInput } from "@/components/auth/AuthInput";
-
-import { saveAuthIdentity } from "@/lib/auth-session";
-import { validateEmail, validatePassword } from "@/lib/validations";
-import { AuthInput } from "@/components/auth/AuthInput";
 import { PasswordInput } from "@/components/auth/PasswordInput";
 
 export function LoginForm({ mode = "standard", notice = "" }: { mode?: "standard" | "admin"; notice?: string }) {
-
   const router = useRouter();
   const [form, setForm] = useState({ email: "", password: "", remember: true });
   const [errors, setErrors] = useState<{ email?: string; password?: string; general?: string }>({});
