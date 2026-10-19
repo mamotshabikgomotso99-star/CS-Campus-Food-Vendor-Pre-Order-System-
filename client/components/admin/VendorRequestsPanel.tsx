@@ -1,6 +1,11 @@
 "use client";
 
 import { Check, Clock3, LogOut, RefreshCw, Store, X } from "lucide-react";
+"use client";
+
+import Link from "next/link";
+import { Check, Clock3, LogOut, RefreshCw, Store, X } from "lucide-react";
+
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { clearAuthIdentity } from "@/lib/auth-session";
@@ -29,10 +34,11 @@ export function VendorRequestsPanel() {
         if (isActive) setIsLoading(false);
       }
     };
-    void loadRequests();
-    return () => { isActive = false; };
-  }, [refreshKey]);
 
+      } finally {
+        if (isActive) setIsLoading(false);
+      }
+    };
   const handleDecision = async (vendorRequest: VendorRequest, status: "approved" | "rejected") => {
     setBusyRequestId(vendorRequest.id);
     setError("");
@@ -48,7 +54,17 @@ export function VendorRequestsPanel() {
     }
   };
 
+    } finally {
+      setBusyRequestId(null);
+    }
+  };
+
   const handleLogout = async () => {
+    await logoutUser().catch(() => {});
+    clearAuthIdentity();
+    router.replace("/admin/login");
+  };
+
     await logoutUser().catch(() => {});
     clearAuthIdentity();
     router.replace("/admin/login");
@@ -58,13 +74,19 @@ export function VendorRequestsPanel() {
     <main className="min-h-screen bg-slate-50 text-slate-900">
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
+    <main className="min-h-screen bg-slate-50 text-slate-900">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-700">Campus Eats</p>
             <h1 className="mt-1 text-xl font-semibold">Admin review</h1>
           </div>
-          <button type="button" onClick={handleLogout} title="Sign out" className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-            <LogOut aria-hidden="true" size={16} /> <span>Sign out</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <Link href="/admin/locations" className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Vendor locations</Link>
+            <button type="button" onClick={handleLogout} title="Sign out" className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              <LogOut aria-hidden="true" size={16} /> <span>Sign out</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -119,6 +141,14 @@ export function VendorRequestsPanel() {
                   <button type="button" onClick={() => void handleDecision(vendorRequest, "rejected")} disabled={busyRequestId !== null} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                     <X aria-hidden="true" size={16} /> Reject
                   </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
+
                 </div>
               </article>
             ))}

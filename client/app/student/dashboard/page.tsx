@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { VendorCoverImage } from "@/components/menu/VendorCoverImage";
+import { CampusVendorMap } from "@/components/map/CampusVendorMap";
 import { StudentDashboardGreeting } from "@/components/auth/AuthIdentityProvider";
 import { StudentOrderOverview } from "@/components/orders/StudentOrderOverview";
 import { getMenuItems, resolveApiUrl, type MenuApiItem } from "@/lib/api";
@@ -20,6 +21,9 @@ type VendorSummary = {
   eta: string;
   rating: number;
   accent: string;
+  collectionLocation: string | null;
+  latitude: number | null;
+  longitude: number | null;
 };
 
 function buildVendorSummaries(items: MenuApiItem[]): VendorSummary[] {
@@ -30,6 +34,13 @@ function buildVendorSummaries(items: MenuApiItem[]): VendorSummary[] {
     if (existing) {
       if (!existing.imageUrl && item.imageUrl) {
         existing.imageUrl = resolveApiUrl(item.imageUrl);
+      }
+      if (!existing.collectionLocation && item.collectionLocation) {
+        existing.collectionLocation = item.collectionLocation;
+      }
+      if (existing.latitude === null && existing.longitude === null && item.latitude != null && item.longitude != null) {
+        existing.latitude = item.latitude;
+        existing.longitude = item.longitude;
       }
       continue;
     }
@@ -44,6 +55,9 @@ function buildVendorSummaries(items: MenuApiItem[]): VendorSummary[] {
       eta: "Ready for collection",
       rating: 4.8,
       accent: "from-violet-100 via-violet-50 to-slate-100",
+      collectionLocation: item.collectionLocation ?? null,
+      latitude: item.latitude ?? null,
+      longitude: item.longitude ?? null,
     });
   }
 
@@ -54,6 +68,8 @@ export default function StudentDashboardPage() {
   const [vendors, setVendors] = useState<VendorSummary[]>([]);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const mappedVendors = vendors.filter((vendor) => vendor.latitude !== null && vendor.longitude !== null);
+  const unpinnedVendors = vendors.filter((vendor) => vendor.latitude === null || vendor.longitude === null);
 
   useEffect(() => {
     let isCurrent = true;
@@ -103,6 +119,43 @@ export default function StudentDashboardPage() {
         </section>
 
         <StudentOrderOverview />
+
+        <section className="space-y-4">
+          <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 pb-3">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">TUT Soshanguve South vendor map</h2>
+              <p className="mt-1 text-sm text-slate-600">Find confirmed vendor collection points and open walking directions.</p>
+            </div>
+            <Link href="/student/vendors" className="text-sm font-medium text-violet-700 hover:text-violet-800">Browse all vendors</Link>
+          </div>
+
+          {error ? (
+            <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>
+          ) : null}
+          {isLoading ? <p className="text-sm text-slate-500" role="status">Loading campus locations...</p> : null}
+          <CampusVendorMap
+            vendors={mappedVendors.map((vendor) => ({
+              id: vendor.id,
+              name: vendor.name,
+              collectionLocation: vendor.collectionLocation,
+              latitude: vendor.latitude,
+              longitude: vendor.longitude,
+              href: `/student/vendors/${vendor.id}`,
+            }))}
+          />
+          {!isLoading && !error && mappedVendors.length === 0 ? (
+            <p className="text-sm text-slate-600" role="status">The campus map is shown; vendor pins will appear when locations are confirmed.</p>
+          ) : null}
+
+          {!isLoading && !error && unpinnedVendors.length > 0 ? (
+            <div className="border-t border-slate-200 pt-3">
+              <h3 className="text-sm font-semibold text-slate-800">Vendors without a confirmed map pin</h3>
+              <p className="mt-1 text-sm text-slate-600">
+                {unpinnedVendors.map((vendor) => `${vendor.name}${vendor.collectionLocation ? ` · ${vendor.collectionLocation}` : ""}`).join("; ")}
+              </p>
+            </div>
+          ) : null}
+        </section>
 
         <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
           <div className="rounded-[28px] border border-violet-100 bg-white p-4 shadow-sm sm:p-5">

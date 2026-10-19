@@ -2,8 +2,10 @@ const { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } = require
 const { promisify } = require('node:util');
 const cors = require('cors');
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const multer = require('multer');
 const { ensureCollectionSlots } = require('./database');
+const { createSmtpMailer, createSmtpVerificationMailer } = require('./email');
 const { buildCheckoutReturnUrls, createStripeClient, getClientOrigin } = require('./payments');
 
 const scryptAsync = promisify(scrypt);
@@ -11,6 +13,52 @@ const SESSION_COOKIE = 'campus_eats_session';
 const SERVICE_FEE_CENTS = 500;
 const FIRST_ORDER_DISCOUNT_PERCENT = 20;
 const MAX_MENU_IMAGE_BYTES = 2 * 1024 * 1024;
+const TUT_SOSHANGUVE_SOUTH_BOUNDS = {
+  minLatitude: -25.5470054,
+  maxLatitude: -25.5340617,
+  minLongitude: 28.0906443,
+  maxLongitude: 28.0999382,
+};
+const TUT_SOSHANGUVE_SOUTH_BOUNDARY = [
+  [-25.5340617, 28.0953824],
+  [-25.5364808, 28.0998952],
+  [-25.5365776, 28.0999382],
+  [-25.5391563, 28.0985373],
+  [-25.5399930, 28.0981763],
+  [-25.5403570, 28.0979286],
+  [-25.5406253, 28.0976242],
+  [-25.5409765, 28.0976101],
+  [-25.5411298, 28.0977941],
+  [-25.5438250, 28.0968244],
+  [-25.5438888, 28.0967182],
+  [-25.5441060, 28.0966262],
+  [-25.5442656, 28.0966616],
+  [-25.5454791, 28.0960953],
+  [-25.5469415, 28.0951326],
+  [-25.5470054, 28.0948070],
+  [-25.5458431, 28.0934409],
+  [-25.5446169, 28.0921739],
+  [-25.5440421, 28.0928392],
+  [-25.5414515, 28.0906443],
+];
+
+function isWithinTutSoshanguveSouth(latitude, longitude) {
+  let isInside = false;
+  for (
+    let currentIndex = 0, previousIndex = TUT_SOSHANGUVE_SOUTH_BOUNDARY.length - 1;
+    currentIndex < TUT_SOSHANGUVE_SOUTH_BOUNDARY.length;
+    previousIndex = currentIndex, currentIndex += 1
+  ) {
+    const [currentLatitude, currentLongitude] = TUT_SOSHANGUVE_SOUTH_BOUNDARY[currentIndex];
+    const [previousLatitude, previousLongitude] = TUT_SOSHANGUVE_SOUTH_BOUNDARY[previousIndex];
+    const crossesRay =
+      (currentLongitude > longitude) !== (previousLongitude > longitude) &&
+      latitude < ((previousLatitude - currentLatitude) * (longitude - currentLongitude)) /
+        (previousLongitude - currentLongitude) + currentLatitude;
+    if (crossesRay) isInside = !isInside;
+  }
+  return isInside;
+}
 const ALLOWED_MENU_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const menuImageUpload = multer({
   storage: multer.memoryStorage(),
@@ -339,6 +387,37 @@ async function processStripeWebhookEvent(pool, event) {
 
 function createApp(pool, dependencies = {}) {
   const app = express();
+  app.set('trust proxy', 1);
+  const requiresEmailVerification = process.env.NODE_ENV === 'production' || dependencies.requireEmailVerification === true;
+  const sendPasswordResetEmail = Object.hasOwn(dependencies, 'sendPasswordResetEmail')
+    ? dependencies.sendPasswordResetEmail
+    : createSmtpMailer();
+  const sendVerificationEmail = Object.hasOwn(dependencies, 'sendVerificationEmail')
+    ? dependencies.sendVerificationEmail
+    : createSmtpVerificationMailer();
+  const passwordResetClientOrigin = dependencies.passwordResetClientOrigin ?? (process.env.CLIENT_URL ?? '').split(',')[0].trim();
+  const verificationClientOrigin = dependencies.verificationClientOrigin ?? (process.env.CLIENT_URL ?? '').split(',')[0].trim();
+  const passwordResetLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: 'Too many reset attempts. Please try again later.' },
+  });
+  const verificationResendLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: 'Too many verification requests. Please try again later.' },
+  });
+  const verificationConfirmLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: 'Too many verification attempts. Please try again later.' },
+  });
   const stripeClient = Object.hasOwn(dependencies, 'stripeClient')
     ? dependencies.stripeClient
     : createStripeClient();
@@ -596,6 +675,188 @@ function createApp(pool, dependencies = {}) {
     });
   };
 
+  app.post('/api/vendor-requests', async (request, response) => {
+    const fullName = typeof request.body.fullName === 'string' ? request.body.fullName.trim() : '';
+    const email = typeof request.body.email === 'string' ? request.body.email.trim().toLowerCase() : '';
+    const password = typeof request.body.password === 'string' ? request.body.password : '';
+    const vendorName = typeof request.body.vendorName === 'string' ? request.body.vendorName.trim() : '';
+    const category = typeof request.body.category === 'string' ? request.body.category.trim() : '';
+    const collectionLocation = typeof request.body.collectionLocation === 'string' ? request.body.collectionLocation.trim() : '';
+    const openingTime = typeof request.body.openingTime === 'string' ? request.body.openingTime : '';
+    const closingTime = typeof request.body.closingTime === 'string' ? request.body.closingTime : '';
+    const preparationTimeMinutes = Number(request.body.preparationTimeMinutes);
+    const isValidTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+
+    if (
+      !fullName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 8 ||
+      (request.body.confirmPassword && request.body.confirmPassword !== password) ||
+      !vendorName || vendorName.length > 120 || !category || category.length > 80 ||
+      !collectionLocation || collectionLocation.length > 200 ||
+      !isValidTime(openingTime) || !isValidTime(closingTime) || openingTime >= closingTime ||
+      !Number.isInteger(preparationTimeMinutes) || preparationTimeMinutes < 1 || preparationTimeMinutes > 180
+    ) {
+      response.status(400).json({ success: false, message: 'Provide valid contact, business, and operating details.' });
+      return;
+    }
+
+    try {
+      const existingAccount = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+      if (existingAccount.rows[0]) {
+        response.status(409).json({ success: false, message: 'An account with this email already exists.' });
+        return;
+      }
+      const passwordHash = await hashPassword(password);
+      await pool.query(
+        `INSERT INTO vendor_requests
+          (id, full_name, email, password_hash, vendor_name, category, collection_location,
+           opening_time, closing_time, preparation_time_minutes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [randomUUID(), fullName, email, passwordHash, vendorName, category, collectionLocation,
+          openingTime, closingTime, preparationTimeMinutes],
+      );
+      response.status(201).json({ success: true, message: 'Vendor request submitted for admin review.' });
+    } catch (error) {
+      if (error.code === '23505') {
+        response.status(409).json({ success: false, message: 'A vendor request for this email is already pending.' });
+        return;
+      }
+      response.status(500).json({ success: false, message: 'Unable to submit your vendor request right now.' });
+    }
+  });
+
+  app.get('/api/admin/vendor-requests', requireRole('admin'), async (request, response) => {
+    try {
+      const result = await pool.query(
+        `SELECT id, full_name AS "fullName", email, vendor_name AS "vendorName", category,
+                collection_location AS "collectionLocation", opening_time AS "openingTime",
+                closing_time AS "closingTime", preparation_time_minutes AS "preparationTimeMinutes",
+                created_at AS "createdAt"
+           FROM vendor_requests WHERE status = 'pending' ORDER BY created_at ASC`,
+      );
+      response.json({ success: true, requests: result.rows });
+    } catch {
+      response.status(500).json({ success: false, message: 'Unable to load vendor requests right now.' });
+    }
+  });
+
+  app.get('/api/admin/vendors/locations', requireRole('admin'), async (request, response) => {
+    try {
+      const result = await pool.query(
+        `SELECT id, name, collection_location AS "collectionLocation",
+                latitude, longitude
+           FROM vendors
+          WHERE owner_user_id IS NOT NULL AND collection_location IS NOT NULL
+          ORDER BY name`,
+      );
+      response.json({ success: true, vendors: result.rows });
+    } catch {
+      response.status(500).json({ success: false, message: 'Unable to load vendor locations right now.' });
+    }
+  });
+
+  app.patch('/api/admin/vendors/:vendorId/location', requireRole('admin'), async (request, response) => {
+    const latitude = request.body.latitude;
+    const longitude = request.body.longitude;
+    const bounds = TUT_SOSHANGUVE_SOUTH_BOUNDS;
+    if (
+      typeof latitude !== 'number' || !Number.isFinite(latitude) ||
+      typeof longitude !== 'number' || !Number.isFinite(longitude) ||
+      latitude < bounds.minLatitude || latitude > bounds.maxLatitude ||
+      longitude < bounds.minLongitude || longitude > bounds.maxLongitude ||
+      !isWithinTutSoshanguveSouth(latitude, longitude)
+    ) {
+      response.status(400).json({ success: false, message: 'Choose a valid pin inside TUT Soshanguve South campus.' });
+      return;
+    }
+
+    try {
+      const result = await pool.query(
+        `UPDATE vendors
+            SET latitude = $1, longitude = $2
+          WHERE id = $3 AND owner_user_id IS NOT NULL AND collection_location IS NOT NULL
+          RETURNING id, name, collection_location AS "collectionLocation", latitude, longitude`,
+        [latitude, longitude, request.params.vendorId],
+      );
+      if (!result.rows[0]) {
+        response.status(404).json({ success: false, message: 'Approved vendor with a collection point not found.' });
+        return;
+      }
+      response.json({ success: true, vendor: result.rows[0] });
+    } catch {
+      response.status(500).json({ success: false, message: 'Unable to save the vendor location right now.' });
+    }
+  });
+
+  app.patch('/api/admin/vendor-requests/:requestId', requireRole('admin'), async (request, response) => {
+    const decision = request.body.status;
+    if (decision !== 'approved' && decision !== 'rejected') {
+      response.status(400).json({ success: false, message: 'Choose approve or reject for this request.' });
+      return;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `SELECT id, full_name, email, password_hash, vendor_name, category,
+                collection_location, opening_time, closing_time, preparation_time_minutes
+           FROM vendor_requests WHERE id = $1 AND status = 'pending' FOR UPDATE`,
+        [request.params.requestId],
+      );
+      const vendorRequest = result.rows[0];
+      if (!vendorRequest) {
+        await client.query('ROLLBACK');
+        response.status(404).json({ success: false, message: 'This pending vendor request was not found.' });
+        return;
+      }
+      if (
+        decision === 'approved' &&
+        (!vendorRequest.collection_location || !vendorRequest.opening_time || !vendorRequest.closing_time ||
+          !Number.isInteger(vendorRequest.preparation_time_minutes))
+      ) {
+        await client.query('ROLLBACK');
+        response.status(409).json({ success: false, message: 'This request is missing required operating details.' });
+        return;
+      }
+
+      let vendorId = null;
+      if (decision === 'approved') {
+        const userId = randomUUID();
+        vendorId = randomUUID();
+        await client.query(
+          `INSERT INTO users (id, full_name, email, password_hash, role)
+           VALUES ($1, $2, $3, $4, 'vendor')`,
+          [userId, vendorRequest.full_name, vendorRequest.email, vendorRequest.password_hash],
+        );
+        await client.query(
+          `INSERT INTO vendors
+            (id, name, category, owner_user_id, collection_location, opening_time, closing_time, preparation_time_minutes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [vendorId, vendorRequest.vendor_name, vendorRequest.category, userId,
+            vendorRequest.collection_location, vendorRequest.opening_time,
+            vendorRequest.closing_time, vendorRequest.preparation_time_minutes],
+        );
+      }
+      await client.query(
+        `UPDATE vendor_requests
+            SET status = $1, vendor_id = $2, reviewed_by = $3, reviewed_at = NOW(), password_hash = ''
+          WHERE id = $4`,
+        [decision, vendorId, request.user.id, vendorRequest.id],
+      );
+      await client.query('COMMIT');
+      response.json({ success: true, message: `Vendor request ${decision}.`, status: decision });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      if (error.code === '23505') {
+        response.status(409).json({ success: false, message: 'The vendor email or business name is already in use.' });
+        return;
+      }
+      response.status(500).json({ success: false, message: 'Unable to review this vendor request right now.' });
+    } finally {
+      client.release();
+    }
+  });
+
   app.post('/api/auth/register', async (request, response) => {
     const fullName = typeof request.body.fullName === 'string' ? request.body.fullName.trim() : '';
     const email = typeof request.body.email === 'string' ? request.body.email.trim().toLowerCase() : '';
@@ -621,6 +882,10 @@ function createApp(pool, dependencies = {}) {
       response.status(400).json({ success: false, message: 'Please provide valid account details.' });
       return;
     }
+    if (requiresEmailVerification && (!sendVerificationEmail || !verificationClientOrigin)) {
+      response.status(503).json({ success: false, message: 'Email verification is not configured.' });
+      return;
+    }
 
     const client = await pool.connect();
     try {
@@ -632,9 +897,37 @@ function createApp(pool, dependencies = {}) {
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [userId, fullName, email, passwordHash, 'student', studentNumber || staffNumber],
       );
+      const token = randomBytes(32).toString('base64url');
+      await client.query(
+        `INSERT INTO email_verification_tokens (id, user_id, token_hash, expires_at)
+         VALUES ($1, $2, $3, NOW() + INTERVAL '24 hours')`,
+        [randomUUID(), userId, hashToken(token)],
+      );
 
       await client.query('COMMIT');
-      response.status(201).json({ success: true, message: 'Account created. Please sign in to continue.', role: 'student' });
+      let verificationSent = false;
+      if (sendVerificationEmail && verificationClientOrigin) {
+        try {
+          const verificationUrl = new URL('/verify-email', verificationClientOrigin);
+          verificationUrl.searchParams.set('token', token);
+          await sendVerificationEmail(email, verificationUrl.toString());
+          verificationSent = true;
+        } catch {
+          console.error('Email verification delivery failed.');
+        }
+      }
+      response.status(201).json({
+        success: true,
+        message: verificationSent
+          ? 'Account created. Check your email to verify your account.'
+          : requiresEmailVerification
+            ? 'Account created, but the verification email could not be sent. Request another link to try again.'
+            : 'Account created. You can sign in now; the verification email could not be sent.',
+        role,
+        verificationSent,
+        verificationRequired: requiresEmailVerification,
+      });
+
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       if (error.code === '23505') {
@@ -652,7 +945,7 @@ function createApp(pool, dependencies = {}) {
     const password = typeof request.body.password === 'string' ? request.body.password : '';
     try {
       const result = await pool.query(
-        'SELECT id, email, full_name, role, password_hash FROM users WHERE email = $1',
+        'SELECT id, email, full_name, role, password_hash, email_verified_at FROM users WHERE email = $1',
         [email],
       );
       const user = result.rows[0];
@@ -660,6 +953,15 @@ function createApp(pool, dependencies = {}) {
         response.status(401).json({ success: false, message: 'Invalid email or password.' });
         return;
       }
+      if (requiresEmailVerification && user.role === 'student' && !user.email_verified_at) {
+        response.status(403).json({
+          success: false,
+          code: 'EMAIL_NOT_VERIFIED',
+          message: 'Please verify your email before signing in.',
+        });
+        return;
+      }
+
       if (user.role === 'vendor' && !(await hasVendorProfile(pool, user.id))) {
         response.status(403).json({ success: false, message: 'Your vendor account is awaiting admin approval.' });
         return;
@@ -705,16 +1007,207 @@ function createApp(pool, dependencies = {}) {
     response.json({ success: true, message: 'Signed out.' });
   });
 
-  app.post('/api/auth/forgot-password', (request, response) => {
-    response.json({ success: true, message: 'Password reset is not configured for this prototype.' });
+  app.post('/api/auth/forgot-password', passwordResetLimiter, async (request, response) => {
+    const email = typeof request.body.email === 'string' ? request.body.email.trim().toLowerCase() : '';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      response.status(400).json({ success: false, message: 'Enter a valid email address.' });
+      return;
+    }
+
+    if (!sendPasswordResetEmail || !passwordResetClientOrigin) {
+      response.status(503).json({ success: false, message: 'Password reset email is not configured.' });
+      return;
+    }
+
+    try {
+      const result = await pool.query('SELECT id, email FROM users WHERE email = $1', [email]);
+      const user = result.rows[0];
+      if (user) {
+        const token = randomBytes(32).toString('base64url');
+        const tokenHash = hashToken(token);
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [user.id]);
+          await client.query(
+            'DELETE FROM password_reset_tokens WHERE user_id = $1 AND used_at IS NULL',
+            [user.id],
+          );
+          await client.query(
+            `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at)
+             VALUES ($1, $2, $3, NOW() + INTERVAL '30 minutes')`,
+            [randomUUID(), user.id, tokenHash],
+          );
+          await client.query('COMMIT');
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw error;
+        } finally {
+          client.release();
+        }
+
+        const resetUrl = new URL('/reset-password', passwordResetClientOrigin);
+        resetUrl.searchParams.set('token', token);
+        try {
+          await sendPasswordResetEmail(user.email, resetUrl.toString());
+        } catch {
+          await pool.query('DELETE FROM password_reset_tokens WHERE token_hash = $1', [tokenHash]).catch(() => {});
+          console.error('Password reset email delivery failed.');
+        }
+      }
+
+      response.json({
+        success: true,
+        message: 'If an account exists for that email, a password reset link will be sent.',
+      });
+    } catch {
+      response.status(500).json({ success: false, message: 'Unable to process your reset request right now.' });
+    }
   });
 
-  app.post('/api/auth/reset-password', (request, response) => {
-    response.status(501).json({ success: false, message: 'Password reset verification is not configured yet.' });
+  app.post('/api/auth/reset-password', passwordResetLimiter, async (request, response) => {
+    const token = typeof request.body.token === 'string' ? request.body.token : '';
+    const password = typeof request.body.password === 'string' ? request.body.password : '';
+    const confirmPassword = typeof request.body.confirmPassword === 'string' ? request.body.confirmPassword : '';
+    if (!token || password.length < 8 || password !== confirmPassword) {
+      response.status(400).json({ success: false, message: 'Provide a valid reset link and matching password of at least 8 characters.' });
+      return;
+    }
+
+    let client;
+    try {
+      const passwordHash = await hashPassword(password);
+      client = await pool.connect();
+      await client.query('BEGIN');
+      const tokenResult = await client.query(
+        `SELECT id, user_id FROM password_reset_tokens
+          WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()
+          FOR UPDATE`,
+        [hashToken(token)],
+      );
+      const resetToken = tokenResult.rows[0];
+      if (!resetToken) {
+        await client.query('ROLLBACK');
+        response.status(400).json({ success: false, message: 'This reset link is invalid or has expired.' });
+        return;
+      }
+
+      await client.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, resetToken.user_id]);
+      await client.query(
+        'UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL',
+        [resetToken.user_id],
+      );
+      await client.query('DELETE FROM sessions WHERE user_id = $1', [resetToken.user_id]);
+      await client.query('COMMIT');
+      response.json({ success: true, message: 'Your password has been reset. Sign in with your new password.' });
+    } catch {
+      if (client) await client.query('ROLLBACK').catch(() => {});
+      response.status(500).json({ success: false, message: 'Unable to reset your password right now.' });
+    } finally {
+      client?.release();
+    }
   });
 
-  app.post('/api/auth/verify-email', (request, response) => {
-    response.json({ success: true, message: 'Email verification is not configured for this prototype.' });
+  app.post('/api/auth/verify-email', verificationResendLimiter, async (request, response) => {
+    const email = typeof request.body.email === 'string' ? request.body.email.trim().toLowerCase() : '';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      response.status(400).json({ success: false, message: 'Enter a valid email address.' });
+      return;
+    }
+    if (!sendVerificationEmail || !verificationClientOrigin) {
+      response.status(503).json({ success: false, message: 'Email verification is not configured.' });
+      return;
+    }
+
+    try {
+      const result = await pool.query(
+        `SELECT id FROM users
+          WHERE email = $1 AND role = 'student' AND email_verified_at IS NULL`,
+        [email],
+      );
+      const user = result.rows[0];
+      if (user) {
+        const client = await pool.connect();
+        let token;
+        try {
+          await client.query('BEGIN');
+          await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [user.id]);
+          await client.query(
+            'DELETE FROM email_verification_tokens WHERE user_id = $1 AND used_at IS NULL',
+            [user.id],
+          );
+          token = randomBytes(32).toString('base64url');
+          await client.query(
+            `INSERT INTO email_verification_tokens (id, user_id, token_hash, expires_at)
+             VALUES ($1, $2, $3, NOW() + INTERVAL '24 hours')`,
+            [randomUUID(), user.id, hashToken(token)],
+          );
+          await client.query('COMMIT');
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw error;
+        } finally {
+          client.release();
+        }
+
+        const verificationUrl = new URL('/verify-email', verificationClientOrigin);
+        verificationUrl.searchParams.set('token', token);
+        try {
+          await sendVerificationEmail(email, verificationUrl.toString());
+        } catch {
+          console.error('Email verification delivery failed.');
+        }
+      }
+
+      response.json({
+        success: true,
+        message: 'If an unverified student account exists for that email, a verification link will be sent.',
+      });
+    } catch {
+      response.status(500).json({ success: false, message: 'Unable to process your verification request right now.' });
+    }
+  });
+
+  app.post('/api/auth/confirm-email', verificationConfirmLimiter, async (request, response) => {
+    const token = typeof request.body.token === 'string' ? request.body.token : '';
+    if (!token) {
+      response.status(400).json({ success: false, message: 'Provide a valid verification link.' });
+      return;
+    }
+
+    let client;
+    try {
+      client = await pool.connect();
+      await client.query('BEGIN');
+      const result = await client.query(
+        `SELECT id, user_id FROM email_verification_tokens
+          WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()
+          FOR UPDATE`,
+        [hashToken(token)],
+      );
+      const verificationToken = result.rows[0];
+      if (!verificationToken) {
+        await client.query('ROLLBACK');
+        response.status(400).json({ success: false, message: 'This verification link is invalid or has expired.' });
+        return;
+      }
+
+      await client.query(
+        'UPDATE users SET email_verified_at = COALESCE(email_verified_at, NOW()) WHERE id = $1 AND role = $2',
+        [verificationToken.user_id, 'student'],
+      );
+      await client.query(
+        'UPDATE email_verification_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL',
+        [verificationToken.user_id],
+      );
+      await client.query('COMMIT');
+      response.json({ success: true, message: 'Email verified. You can now sign in.' });
+    } catch {
+      if (client) await client.query('ROLLBACK').catch(() => {});
+      response.status(500).json({ success: false, message: 'Unable to verify your email right now.' });
+    } finally {
+      client?.release();
+    }
   });
 
   app.get('/api/menu', async (request, response) => {
@@ -726,7 +1219,8 @@ function createApp(pool, dependencies = {}) {
         vendorFilter = 'AND m.vendor_id = $1';
       }
       const result = await pool.query(
-        `SELECT m.id, m.name, m.vendor_id, v.name AS vendor, m.price_cents,
+        `SELECT m.id, m.name, m.vendor_id, v.name AS vendor,
+          v.collection_location, v.latitude, v.longitude, m.price_cents,
           m.category, m.description, m.available, m.image_mime_type
            FROM menu_items m JOIN vendors v ON v.id = m.vendor_id
           WHERE m.available = TRUE ${vendorFilter}
@@ -740,6 +1234,9 @@ function createApp(pool, dependencies = {}) {
           name: item.name,
           vendorId: item.vendor_id,
           vendor: item.vendor,
+          collectionLocation: item.collection_location,
+          latitude: item.latitude,
+          longitude: item.longitude,
           priceCents: item.price_cents,
           category: item.category,
           description: item.description,

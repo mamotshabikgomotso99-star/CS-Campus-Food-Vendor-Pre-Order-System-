@@ -77,7 +77,7 @@ export function RegisterForm() {
     setErrors({});
 
     try {
-      await registerUser({
+      const response = await registerUser({
         fullName: form.fullName,
         email: form.email,
         password: form.password,
@@ -87,7 +87,14 @@ export function RegisterForm() {
         staffNumber: form.staffNumber.trim() || undefined,
       });
 
-      router.push("/verify-email");
+      if (response.verificationRequired === false) {
+        router.push("/login?accountCreated=local");
+        return;
+      }
+
+      const query = new URLSearchParams({ email: form.email.trim() });
+      if (!response.verificationSent) query.set("delivery", "failed");
+      router.push(`/verify-email?${query.toString()}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Registration failed. Please try again.";
       setErrors({ general: message });
@@ -218,7 +225,11 @@ export function RegisterForm() {
           </Link>
         </p>
         <p className="text-center text-sm text-slate-600">
-          Applying as a campus vendor?{" "}
+          Campus vendor?{" "}
+          <Link href="/vendor/apply" className="font-semibold text-violet-700 hover:text-violet-800">
+            Request vendor access
+          </Link>
+
           <Link href="/vendor/apply" className="font-semibold text-violet-700 hover:text-violet-800">
             Request vendor access
           </Link>

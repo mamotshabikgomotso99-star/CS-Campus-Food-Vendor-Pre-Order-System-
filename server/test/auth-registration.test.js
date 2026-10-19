@@ -1,10 +1,12 @@
 const assert = require('node:assert/strict');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
-const { createApp } = require('../app');
+const { createApp, hashPassword, verifyPassword } = require('../app');
 const { createPool, initializeDatabase } = require('../database');
+const { createSmtpMailer, createSmtpVerificationMailer } = require('../email');
+
 
 const envPath = path.join(__dirname, '..', '.env');
 if (process.loadEnvFile && fs.existsSync(envPath)) {
@@ -34,8 +36,6 @@ function createRegistrationPool() {
       return { rows: [], rowCount: 0 };
     },
   };
-}
-
 function createAdminPool(vendorRequest) {
   const calls = [];
   const admin = { id: 'admin-id', email: 'admin@example.test', full_name: 'Campus Admin', role: 'admin' };
@@ -72,8 +72,74 @@ function createUnapprovedVendorPool() {
   };
 }
 
-async function startRegistrationServer(context, pool) {
-  const server = createApp(pool).listen(0, '127.0.0.1');
+function createLoginPool(user) {
+
+}
+
+function createLoginPool(user) {
+  const calls = [];
+  return {
+    calls,
+    async query(sql, parameters = []) {
+      calls.push({ sql, parameters });
+      if (sql.includes('FROM users WHERE email = $1')) {
+        return { rows: [user], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    },
+  };
+}
+
+function createAdminPool(vendorRequest) {
+  const calls = [];
+  const admin = { id: 'admin-id', email: 'admin@example.test', full_name: 'Campus Admin', role: 'admin' };
+  const client = {
+    async query(sql, parameters = []) {
+      calls.push({ sql, parameters });
+      if (sql.includes('FROM vendor_requests WHERE id')) return { rows: [vendorRequest], rowCount: 1 };
+      return { rows: [], rowCount: 1 };
+    },
+    release() {},
+  };
+  return {
+    calls,
+    async query(sql, parameters = []) {
+      calls.push({ sql, parameters });
+      if (sql.includes('FROM sessions')) return { rows: [admin], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+    async connect() { return client; },
+  };
+}
+
+function createPasswordResetPool({ user = null, token = null } = {}) {
+  const calls = [];
+  const client = {
+    async query(sql, parameters = []) {
+      calls.push({ sql, parameters });
+      if (sql.includes('FROM password_reset_tokens')) return { rows: token ? [token] : [], rowCount: token ? 1 : 0 };
+      return { rows: [], rowCount: 1 };
+    },
+    release() {},
+  };
+  return {
+    calls,
+    async query(sql, parameters = []) {
+      calls.push({ sql, parameters });
+      if (sql.includes('SELECT id, email FROM users')) return { rows: user ? [user] : [], rowCount: user ? 1 : 0 };
+      return { rows: [], rowCount: 0 };
+    },
+    async connect() { return client; },
+  };
+}
+
+async function startRegistrationServer(context, pool, dependencies = {}) {
+  const server = createApp(pool, {
+    sendVerificationEmail: async () => {},
+    verificationClientOrigin: 'http://127.0.0.1:3000',
+    requireEmailVerification: true,
+    ...dependencies,
+  }).listen(0, '127.0.0.1');
   await new Promise((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
@@ -82,7 +148,50 @@ async function startRegistrationServer(context, pool) {
   return server;
 }
 
+test('SMTP sender builds authenticated transport and sends reset email', async () => {
+  let transportConfiguration;
+  let message;
+  const mailer = createSmtpMailer({
+    SMTP_HOST: 'smtp.example.test',
+    SMTP_PORT: '587',
+    SMTP_SECURE: 'false',
+    SMTP_USER: 'smtp-test-user',
+    SMTP_PASS: 'smtp-test-password',
+    EMAIL_FROM: 'Campus Eats <reset@example.test>',
+  }, (configuration) => {
+    transportConfiguration = configuration;
+    return { async sendMail(payload) { message = payload; } };
+  });
+
+  await mailer('student@example.test', 'https://campus.example.test/reset-password?token=fake-token');
+
+  assert.equal(transportConfiguration.host, 'smtp.example.test');
+  assert.equal(transportConfiguration.port, 587);
+  assert.equal(transportConfiguration.secure, false);
+  assert.equal(message.to, 'student@example.test');
+  assert.match(message.text, /fake-token/);
+  assert.equal(createSmtpMailer({ SMTP_HOST: '', SMTP_PORT: '0' }), null);
+});
+
+test('SMTP verification sender delivers a one-time verification link', async () => {
+  let message;
+  const mailer = createSmtpVerificationMailer({
+    SMTP_HOST: 'smtp.example.test',
+    SMTP_PORT: '587',
+    SMTP_SECURE: 'false',
+    EMAIL_FROM: 'Campus Eats <verify@example.test>',
+  }, () => ({ async sendMail(payload) { message = payload; } }));
+
+  await mailer('student@example.test', 'https://campus.example.test/verify-email?token=fake-token');
+
+  assert.equal(message.to, 'student@example.test');
+  assert.match(message.subject, /verify/i);
+  assert.match(message.text, /fake-token/);
+  assert.equal(createSmtpVerificationMailer({ SMTP_HOST: '', SMTP_PORT: '0' }), null);
+});
+
 test('public registration cannot create a vendor account', async (context) => {
+
   const pool = createRegistrationPool();
   const server = await startRegistrationServer(context, pool);
 
@@ -195,8 +304,6 @@ test('public registration requires a student or staff number', async (context) =
 });
 
 test('vendor application creates a pending request without creating a user account', async (context) => {
-  const pool = createRegistrationPool();
-  const server = await startRegistrationServer(context, pool);
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/api/vendor-requests`, {
     method: 'POST',
@@ -211,6 +318,10 @@ test('vendor application creates a pending request without creating a user accou
       collectionLocation: 'Student Centre',
       openingTime: '08:00',
       closingTime: '16:00',
+      preparationTimeMinutes: 30,
+    }),
+  });
+
       preparationTimeMinutes: 30,
     }),
   });
@@ -323,4 +434,103 @@ test('admin approval creates and links an active vendor account', async (context
   assert.ok(pool.calls.some((call) => call.sql.includes("VALUES ($1, $2, $3, $4, 'vendor')")));
   assert.ok(pool.calls.some((call) => call.sql.includes('INSERT INTO vendors')));
   assert.ok(pool.calls.some((call) => call.sql === 'COMMIT'));
+});
+
+test('student email verification gates login and consumes links once in PostgreSQL', {
+  skip: !process.env.DATABASE_URL,
+}, async (context) => {
+  const pool = createPool();
+  await initializeDatabase(pool);
+  const suffix = randomUUID();
+  const email = `email-verification-${suffix}@example.test`;
+  let verificationUrl = '';
+  const server = await startRegistrationServer(context, pool, {
+    sendVerificationEmail: async (recipient, url) => {
+      assert.equal(recipient, email);
+      verificationUrl = url;
+    },
+  });
+
+  context.after(async () => {
+    await pool.query('DELETE FROM users WHERE email = $1', [email]);
+    await pool.end();
+  });
+
+  const registerResponse = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fullName: 'Email Verification Test',
+      email,
+      password: 'verified-password-123',
+      confirmPassword: 'verified-password-123',
+      role: 'student',
+    }),
+  });
+  assert.equal(registerResponse.status, 201);
+  const originalToken = new URL(verificationUrl).searchParams.get('token');
+  assert.ok(originalToken);
+
+  const loginBeforeVerification = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: 'verified-password-123' }),
+  });
+  const loginError = await loginBeforeVerification.json();
+  assert.equal(loginBeforeVerification.status, 403);
+  assert.equal(loginError.code, 'EMAIL_NOT_VERIFIED');
+  assert.equal(loginBeforeVerification.headers.get('set-cookie'), null);
+
+  const resendResponse = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/verify-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  assert.equal(resendResponse.status, 200);
+  const replacementToken = new URL(verificationUrl).searchParams.get('token');
+  assert.notEqual(replacementToken, originalToken);
+
+  const originalTokenResponse = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/confirm-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: originalToken }),
+  });
+  assert.equal(originalTokenResponse.status, 400);
+
+  const expiredToken = `expired-${suffix}`;
+  await pool.query(
+    `INSERT INTO email_verification_tokens (id, user_id, token_hash, expires_at)
+     SELECT $1, id, $2, NOW() - INTERVAL '1 minute' FROM users WHERE email = $3`,
+    [randomUUID(), createHash('sha256').update(expiredToken).digest('hex'), email],
+  );
+  const expiredTokenResponse = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/confirm-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: expiredToken }),
+  });
+  assert.equal(expiredTokenResponse.status, 400);
+
+  const confirmResponse = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/confirm-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: replacementToken }),
+  });
+  assert.equal(confirmResponse.status, 200);
+
+  const loginAfterVerification = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: 'verified-password-123' }),
+  });
+  assert.equal(loginAfterVerification.status, 200);
+  assert.ok(loginAfterVerification.headers.get('set-cookie'));
+
+  const replayResponse = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/confirm-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: replacementToken }),
+  });
+  assert.equal(replayResponse.status, 400);
+});
+
 });

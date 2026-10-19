@@ -28,11 +28,12 @@ async function createAdmin() {
   const pool = createPool();
   try {
     await initializeDatabase(pool);
-    const passwordHash = await hashPassword(password);
     await pool.query(
       `INSERT INTO users (id, full_name, email, password_hash, role)
        VALUES ($1, $2, $3, $4, 'admin')`,
-      [randomUUID(), fullName, email, passwordHash],
+      [randomUUID(), fullName, email, await hashPassword(password)],
+    );
+
     );
     console.log(`Admin account created for ${email}.`);
   } finally {

@@ -95,19 +95,24 @@ Authenticated browser requests use the `HttpOnly`, `SameSite=Lax` session cookie
 credentials; CORS must stay limited to configured client origins.
 
 - `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`
-- `POST /api/auth/forgot-password`, `POST /api/auth/reset-password`, `POST /api/auth/verify-email`
+- `POST /api/auth/forgot-password`, `POST /api/auth/reset-password`, `POST /api/auth/verify-email`,
+  `POST /api/auth/confirm-email`
 - `GET /api/menu`, optionally filtered by `vendorId`
 - `GET /api/vendor/menu`, `POST /api/vendor/menu`
 - `PATCH /api/vendor/menu/{itemId}`, `DELETE /api/vendor/menu/{itemId}`
+- `GET /api/admin/vendors/locations`, `PATCH /api/admin/vendors/{vendorId}/location`
 - `GET /api/collection-slots?vendorId={vendorId}`
 - `GET /api/student/orders`, `POST /api/student/orders`
 - `GET /api/vendor/orders`
 - `PATCH /api/vendor/orders/{orderId}/status`
 
 Order and menu ownership, role checks, availability, collection slots, prices, first-order discount,
-and totals are enforced by the server. Email verification and password reset remain
-unconfigured prototype endpoints; reset currently returns `501` rather than changing a
-password without verification.
+and totals are enforced by the server. In production, new student accounts must verify email
+before signing in; local non-production sign-in may bypass verification. Verification links are
+single-use and expire after 24 hours. Password reset uses the configured
+SMTP service with single-use 30-minute links. Vendor map coordinates are admin-only, manually
+confirmed, and bounded to the verified TUT Soshanguve South campus extent; never infer a pin from
+the collection-location text.
 
 ## 7. Security
 

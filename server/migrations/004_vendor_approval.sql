@@ -5,6 +5,7 @@ ALTER TABLE vendors ADD COLUMN IF NOT EXISTS opening_time TIME;
 ALTER TABLE vendors ADD COLUMN IF NOT EXISTS closing_time TIME;
 ALTER TABLE vendors ADD COLUMN IF NOT EXISTS preparation_time_minutes INTEGER;
 
+
 CREATE TABLE IF NOT EXISTS vendor_requests (
   id UUID PRIMARY KEY,
   full_name TEXT NOT NULL,
@@ -16,12 +17,14 @@ CREATE TABLE IF NOT EXISTS vendor_requests (
   opening_time TIME NOT NULL,
   closing_time TIME NOT NULL,
   preparation_time_minutes INTEGER NOT NULL CHECK (preparation_time_minutes BETWEEN 1 AND 180),
+
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
   vendor_id TEXT REFERENCES vendors(id),
   reviewed_by UUID REFERENCES users(id),
   reviewed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CHECK (opening_time < closing_time)
+
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS vendor_requests_pending_email_idx

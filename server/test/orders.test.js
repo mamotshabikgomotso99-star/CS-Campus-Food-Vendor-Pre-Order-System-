@@ -62,6 +62,7 @@ test('first-order discount is server-owned, one-time, and account-specific', {
   const stripeSdk = new Stripe('sk_test_campus_eats');
   const stripeWebhookSecret = 'whsec_campus_eats_test';
   const stripeSessions = new Map();
+  const verificationLinks = new Map();
   const stripeEventIds = [];
   let stripeSessionCount = 0;
   const stripeClient = {
@@ -92,7 +93,12 @@ test('first-order discount is server-owned, one-time, and account-specific', {
       constructEvent: (...args) => stripeSdk.webhooks.constructEvent(...args),
     },
   };
-  const server = createApp(pool, { stripeClient, webhookSecret: stripeWebhookSecret }).listen(0, '127.0.0.1');
+  const server = createApp(pool, {
+    stripeClient,
+    webhookSecret: stripeWebhookSecret,
+    verificationClientOrigin: 'http://127.0.0.1:3000',
+    sendVerificationEmail: async (email, link) => verificationLinks.set(email, link),
+  }).listen(0, '127.0.0.1');
   await new Promise((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
@@ -273,6 +279,12 @@ test('first-order discount is server-owned, one-time, and account-specific', {
       },
     });
     assert.equal(registration.response.status, 201);
+    const token = new URL(verificationLinks.get(account.email)).searchParams.get('token');
+    const confirmation = await send('/api/auth/confirm-email', {
+      method: 'POST',
+      payload: { token },
+    });
+    assert.equal(confirmation.response.status, 200);
 
     const login = await send('/api/auth/login', {
       method: 'POST',
