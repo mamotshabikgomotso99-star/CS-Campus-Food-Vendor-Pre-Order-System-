@@ -150,7 +150,7 @@ export type MenuApiItem = {
 export type VendorMapLocation = {
   id: string;
   name: string;
-  collectionLocation: string;
+  collectionLocation: string | null;
   latitude: number | null;
   longitude: number | null;
 };

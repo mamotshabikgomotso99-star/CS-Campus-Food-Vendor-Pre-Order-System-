@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { RequireAuth } from "@/components/auth/RequireAuth";
+import { CampusVendorMap, type CampusMapPoint } from "@/components/map/CampusVendorMap";
 import { clearAuthIdentity } from "@/lib/auth-session";
 import { getAdminVendorLocations, logoutUser, updateAdminVendorLocation, type VendorMapLocation } from "@/lib/api";
 
@@ -26,7 +27,7 @@ function VendorLocationsContent() {
       .then((response) => {
         if (!isActive) return;
         setVendors(response.vendors);
-        setSelectedVendorId(response.vendors[0]?.id ?? "");
+        setSelectedVendorId(response.vendors.find((vendor) => vendor.id === "student-cafe")?.id ?? response.vendors[0]?.id ?? "");
       })
       .catch((requestError: unknown) => {
         if (isActive) setError(requestError instanceof Error ? requestError.message : "Unable to load vendor locations.");
@@ -39,6 +40,17 @@ function VendorLocationsContent() {
 
   const selectedVendor = vendors.find((vendor) => vendor.id === selectedVendorId) ?? null;
   const selectedDraft = draftLocation?.vendorId === selectedVendorId ? draftLocation : null;
+
+  const pickLocation = ({ latitude, longitude }: CampusMapPoint) => {
+    if (!selectedVendor) return;
+    setDraftLocation({
+      vendorId: selectedVendor.id,
+      latitude: latitude.toString(),
+      longitude: longitude.toString(),
+    });
+    setError("");
+    setMessage("");
+  };
 
   const updateCoordinate = (field: "latitude" | "longitude", value: string) => {
     if (!selectedVendor) return;
@@ -144,7 +156,9 @@ function VendorLocationsContent() {
                           {hasPin ? "Pinned" : "Pin needed"}
                         </span>
                       </span>
-                      <span className="mt-1 block text-sm text-slate-600">{vendor.collectionLocation}</span>
+                      <span className="mt-1 block text-sm text-slate-600">
+                        {vendor.collectionLocation ?? (vendor.id === "student-cafe" ? "Campus cafeteria" : "Collection point not provided")}
+                      </span>
                     </button>
                   );
                 })}
@@ -157,7 +171,9 @@ function VendorLocationsContent() {
                   <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <h3 className="font-semibold text-slate-900">{selectedVendor.name}</h3>
-                      <p className="mt-1 text-sm text-slate-600">Collection: {selectedVendor.collectionLocation}</p>
+                      <p className="mt-1 text-sm text-slate-600">
+                        Collection: {selectedVendor.collectionLocation ?? (selectedVendor.id === "student-cafe" ? "Campus cafeteria" : "Not provided")}
+                      </p>
                       {selectedVendor.latitude !== null && selectedVendor.longitude !== null ? (
                         <p className="mt-1 text-xs text-slate-500">
                           Saved pin: {selectedVendor.latitude.toFixed(6)}, {selectedVendor.longitude.toFixed(6)}
@@ -165,6 +181,25 @@ function VendorLocationsContent() {
                       ) : null}
                     </div>
                   </div>
+                  <p className="mb-2 text-sm text-slate-600">
+                    {selectedVendor.id === "student-cafe"
+                      ? "Click the confirmed cafeteria location on the map, or drag its pin, then save."
+                      : "Click the confirmed collection point on the map, or drag its pin, then save."}
+                  </p>
+                  <CampusVendorMap
+                    vendors={vendors}
+                    editable
+                    selectedVendorId={selectedVendor.id}
+                    draftLocation={selectedDraft?.latitude.trim() && selectedDraft.longitude.trim()
+                      ? { latitude: Number(selectedDraft.latitude), longitude: Number(selectedDraft.longitude) }
+                      : null}
+                    onSelectVendor={(vendorId) => {
+                      setSelectedVendorId(vendorId);
+                      setError("");
+                      setMessage("");
+                    }}
+                    onPickLocation={pickLocation}
+                  />
                   <div className="max-w-xl space-y-4">
                     <div className="grid gap-4 sm:grid-cols-2">
                       <label className="space-y-2 text-sm font-medium text-slate-800">

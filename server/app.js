@@ -745,7 +745,8 @@ function createApp(pool, dependencies = {}) {
         `SELECT id, name, collection_location AS "collectionLocation",
                 latitude, longitude
            FROM vendors
-          WHERE owner_user_id IS NOT NULL AND collection_location IS NOT NULL
+          WHERE (owner_user_id IS NOT NULL AND collection_location IS NOT NULL)
+             OR id = 'student-cafe'
           ORDER BY name`,
       );
       response.json({ success: true, vendors: result.rows });
@@ -773,7 +774,8 @@ function createApp(pool, dependencies = {}) {
       const result = await pool.query(
         `UPDATE vendors
             SET latitude = $1, longitude = $2
-          WHERE id = $3 AND owner_user_id IS NOT NULL AND collection_location IS NOT NULL
+          WHERE id = $3
+            AND ((owner_user_id IS NOT NULL AND collection_location IS NOT NULL) OR id = 'student-cafe')
           RETURNING id, name, collection_location AS "collectionLocation", latitude, longitude`,
         [latitude, longitude, request.params.vendorId],
       );

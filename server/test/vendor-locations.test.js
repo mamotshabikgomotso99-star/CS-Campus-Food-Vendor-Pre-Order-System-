@@ -23,6 +23,14 @@ const campusVendor = {
   longitude: null,
 };
 
+const studentCafe = {
+  id: 'student-cafe',
+  name: 'Student Café',
+  collectionLocation: null,
+  latitude: null,
+  longitude: null,
+};
+
 function createMockPool(role = 'admin') {
   const calls = [];
   return {
@@ -33,13 +41,14 @@ function createMockPool(role = 'admin') {
         return role ? { rows: [{ id: 'user-1', email: 'admin@example.test', full_name: 'Campus Admin', role }] } : { rows: [] };
       }
       if (sql.includes('UPDATE vendors')) {
+        const vendor = parameters[2] === studentCafe.id ? studentCafe : campusVendor;
         return {
-          rows: [{ ...campusVendor, latitude: parameters[0], longitude: parameters[1] }],
+          rows: [{ ...vendor, latitude: parameters[0], longitude: parameters[1] }],
           rowCount: 1,
         };
       }
       if (sql.includes('FROM vendors')) {
-        return { rows: [campusVendor] };
+        return { rows: [campusVendor, studentCafe] };
       }
       if (sql.includes('FROM menu_items')) {
         return {
@@ -90,6 +99,13 @@ test('non-admin users cannot manage vendor map locations', async (context) => {
     headers: adminHeaders(),
   });
   assert.equal(response.status, 403);
+
+  const updateResponse = await fetch(`http://127.0.0.1:${server.address().port}/api/admin/vendors/student-cafe/location`, {
+    method: 'PATCH',
+    headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ latitude: -25.5404, longitude: 28.0945 }),
+  });
+  assert.equal(updateResponse.status, 403);
 });
 
 test('admin can load approved vendors and save a pin inside TUT Soshanguve South', async (context) => {
@@ -101,6 +117,9 @@ test('admin can load approved vendors and save a pin inside TUT Soshanguve South
   const listData = await listResponse.json();
   assert.equal(listResponse.status, 200);
   assert.equal(listData.vendors[0].collectionLocation, campusVendor.collectionLocation);
+  assert.ok(listData.vendors.some((vendor) => vendor.id === studentCafe.id));
+  const listQuery = pool.calls.find((call) => call.sql.includes('FROM vendors'));
+  assert.match(listQuery.sql, /id = 'student-cafe'/);
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/api/admin/vendors/vendor-1/location`, {
     method: 'PATCH',
@@ -114,6 +133,25 @@ test('admin can load approved vendors and save a pin inside TUT Soshanguve South
   assert.equal(data.vendor.longitude, 28.0945);
   const update = pool.calls.find((call) => call.sql.includes('UPDATE vendors'));
   assert.deepEqual(update.parameters, [-25.5404, 28.0945, 'vendor-1']);
+});
+
+test('admin can assign a confirmed map pin to the seeded Student Café', async (context) => {
+  const pool = createMockPool();
+  const server = await startServer(context, pool);
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/admin/vendors/student-cafe/location`, {
+    method: 'PATCH',
+    headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ latitude: -25.5404, longitude: 28.0945 }),
+  });
+  const data = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(data.vendor.id, studentCafe.id);
+  assert.equal(data.vendor.latitude, -25.5404);
+  assert.equal(data.vendor.longitude, 28.0945);
+  const update = pool.calls.find((call) => call.sql.includes('UPDATE vendors'));
+  assert.match(update.sql, /id = 'student-cafe'/);
+  assert.deepEqual(update.parameters, [-25.5404, 28.0945, studentCafe.id]);
 });
 
 test('admin cannot save vendor pins outside the campus boundary', async (context) => {
