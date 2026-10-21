@@ -36,6 +36,8 @@ function createRegistrationPool() {
       return { rows: [], rowCount: 0 };
     },
   };
+}
+
 function createAdminPool(vendorRequest) {
   const calls = [];
   const admin = { id: 'admin-id', email: 'admin@example.test', full_name: 'Campus Admin', role: 'admin' };
@@ -73,10 +75,6 @@ function createUnapprovedVendorPool() {
 }
 
 function createLoginPool(user) {
-
-}
-
-function createLoginPool(user) {
   const calls = [];
   return {
     calls,
@@ -87,28 +85,6 @@ function createLoginPool(user) {
       }
       return { rows: [], rowCount: 1 };
     },
-  };
-}
-
-function createAdminPool(vendorRequest) {
-  const calls = [];
-  const admin = { id: 'admin-id', email: 'admin@example.test', full_name: 'Campus Admin', role: 'admin' };
-  const client = {
-    async query(sql, parameters = []) {
-      calls.push({ sql, parameters });
-      if (sql.includes('FROM vendor_requests WHERE id')) return { rows: [vendorRequest], rowCount: 1 };
-      return { rows: [], rowCount: 1 };
-    },
-    release() {},
-  };
-  return {
-    calls,
-    async query(sql, parameters = []) {
-      calls.push({ sql, parameters });
-      if (sql.includes('FROM sessions')) return { rows: [admin], rowCount: 1 };
-      return { rows: [], rowCount: 0 };
-    },
-    async connect() { return client; },
   };
 }
 
@@ -304,6 +280,8 @@ test('public registration requires a student or staff number', async (context) =
 });
 
 test('vendor application creates a pending request without creating a user account', async (context) => {
+  const pool = createRegistrationPool();
+  const server = await startRegistrationServer(context, pool);
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/api/vendor-requests`, {
     method: 'POST',
@@ -318,10 +296,6 @@ test('vendor application creates a pending request without creating a user accou
       collectionLocation: 'Student Centre',
       openingTime: '08:00',
       closingTime: '16:00',
-      preparationTimeMinutes: 30,
-    }),
-  });
-
       preparationTimeMinutes: 30,
     }),
   });
@@ -465,6 +439,7 @@ test('student email verification gates login and consumes links once in PostgreS
       password: 'verified-password-123',
       confirmPassword: 'verified-password-123',
       role: 'student',
+      studentNumber: `VERIFY-${suffix}`,
     }),
   });
   assert.equal(registerResponse.status, 201);
@@ -531,6 +506,4 @@ test('student email verification gates login and consumes links once in PostgreS
     body: JSON.stringify({ token: replacementToken }),
   });
   assert.equal(replayResponse.status, 400);
-});
-
 });

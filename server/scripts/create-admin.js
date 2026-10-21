@@ -34,7 +34,6 @@ async function createAdmin() {
       [randomUUID(), fullName, email, await hashPassword(password)],
     );
 
-    );
     console.log(`Admin account created for ${email}.`);
   } finally {
     await pool.end();
